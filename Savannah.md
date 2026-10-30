@@ -7,12 +7,7 @@ A fun team project with a search-and-rescue connection
 ## Team Members
 | Name | GitHub Username | Responsibility |
 |------|-----------------|----------------|
-| [Moustafa] | [Moustafa-Bendari] | [Gui dashboard] |
 | [Savannah] | [savannahwalker786] | [DHT11 Sensor] |
-| [Roman] | [] | [Pack + send data to base] |
-| [Anthony] | [] | [GPS Sensor] |
-| [Braxton] | [] | [Recieve and unpack data] |
-
 
 ## Individual Contribution: [Savannah]
 
