@@ -1,5 +1,5 @@
 
-# Team Project: [ECE3730_Team_1_LoRa Rangers]
+# Team Project: ECE3730_Team_1_LoRa Rangers
 
 ## Project Overview
 A fun team project with a search-and-rescue connection
