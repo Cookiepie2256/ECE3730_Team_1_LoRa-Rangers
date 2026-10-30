@@ -8,7 +8,6 @@ A fun team project with a search-and-rescue connection
 | Name | GitHub Username | Responsibility |
 |------|-----------------|----------------|
 | [Moustafa Bendari] | [Moustafa-Bendari] | [website to display data/show sensor info] |
-| [Anthony] | [angottianthony] | [Module or task] |
 ## Individual Contribution: [Your Name]
 
 ### My Responsibility
