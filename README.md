@@ -1,10 +1,8 @@
-# ECE3730_Team_1_LoRa Rangers
-A fun team project with a search-and-rescue connection
-```markdown
-# Team Project: [Project Name]
+
+# Team Project: [ECE3730_Team_1_LoRa Rangers]
 
 ## Project Overview
-Briefly describe what your system will do.
+A fun team project with a search-and-rescue connection
 
 ## Team Members
 | Name | GitHub Username | Responsibility |
@@ -34,11 +32,3 @@ Include one input or test condition and the expected result.
 
 **Markdown tips:** `#` creates a title, `##` creates a section heading, `###` creates a subsection, and `-` creates a bullet. Backticks format filenames or code. On GitHub, open the README to see the formatted result.
 
-### Submission
-
-Each student submits:
-
-- The shared repository URL.
-- Their GitHub username and the name of their contribution section.
-
-The repository must include all team members and the instructor as collaborators, a completed project overview, and a section written and committed by each student.
