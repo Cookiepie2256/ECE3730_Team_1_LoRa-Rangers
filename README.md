@@ -7,7 +7,7 @@ A fun team project with a search-and-rescue connection
 ## Team Members
 | Name | GitHub Username | Responsibility |
 |------|-----------------|----------------|
-| [Name] | [Username] | [Module or task] |
+| [Moustafa] | [Moustafa-Bendari] | [Gui dashboard] |
 | [Name] | [Username] | [Module or task] |
 
 ## Individual Contribution: [Your Name]
