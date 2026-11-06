@@ -1,34 +1,75 @@
+# Team Data Packet and Transmission Plan
 
-# Team Project: ECE3730_Team_1_LoRa Rangers
+**Team name:**  
+**Team members:**  
+**Team leader:**  
+**Last updated:**  
 
-## Project Overview
-A fun team project with a search-and-rescue connection
+## Discussion 1: Packet Format
 
-## Team Members
-| Name | GitHub Username | Responsibility |
-|------|-----------------|----------------|
-| [Moustafa] | [Moustafa-Bendari] | [Gui dashboard] |
-| [Name] | [Username] | [Module or task] |
+Agree on the fields each sensor node will send to the base station. For every field, document its purpose, data type, units, and size before and after compression.
 
-## Individual Contribution: [Your Name]
+> **Important:** Use elapsed time measured by each node (for example, milliseconds since the node started). It is not a shared clock between nodes.
 
-### My Responsibility
-Describe the part of the system you will develop.
+| Field | Purpose | Data type | Units / format | Size before compression (bytes) | Size after compression (bytes) |
+|---|---|---|---|---:|---:|
+| Node ID | Identifies the monitoring node |  |  |  |  |
+| Sequence number | Identifies each packet and helps detect missing packets |  |  |  |  |
+| Elapsed time | Records when the node created the packet, relative to that node’s startup |  |  |  |  |
+| GPS latitude | Reports the node’s latitude |  | degrees |  |  |
+| GPS longitude | Reports the node’s longitude |  | degrees |  |  |
+| GPS speed | Reports the node’s speed |  |  |  |  |
+| Temperature | Reports the measured temperature |  |  |  |  |
+| Humidity | Reports the measured relative humidity |  | % RH |  |  |
+| Status / validity | Indicates whether sensor readings are valid or available |  |  |  |  |
+| Customized field | Describe an additional field, if needed |  |  |  |  |
 
-### My Files
-- `FileName.h` — What this file will contain.
-- `FileName.cpp` — What this file will implement.
+**Total packet data size before compression:** ______ bytes  
+**Total packet data size after compression:** ______ bytes  
 
-### My Inputs and Outputs
-| Direction | Data | Type / Units / Format | Source or Destination |
-|-----------|------|-----------------------|-----------------------|
-| Input | [Data] | [Type or format] | [Source] |
-| Output | [Data] | [Type or format] | [Destination] |
+### Data representation and compression notes
 
-### My Test Plan
-Describe how you will check that your portion works.
-Include one input or test condition and the expected result.
-```
+Describe how your team will encode each value. For example, will the packet use binary values or readable text? If you scale a value before storing it as an integer, document the scale.
 
-**Markdown tips:** `#` creates a title, `##` creates a section heading, `###` creates a subsection, and `-` creates a bullet. Backticks format filenames or code. On GitHub, open the README to see the formatted result.
+| Field | Encoding / compression method | Example |
+|---|---|---|
+|  |  |  |
+|  |  |  |
 
+**Other information needed to interpret the packet:**
+
+- Packet format or field order:
+- How missing or invalid sensor values are represented:
+- Other notes:
+
+## Discussion 2: Data Transmission Coordination
+
+### 1. How will the three nodes take turns transmitting?
+
+Describe the method your team chose. Include how each node knows when it may transmit and how the plan reduces collisions.
+
+**Agreed method:**
+
+- Node 1:
+- Node 2:
+- Node 3:
+- Base station role, if applicable:
+- Transmission interval or schedule:
+- What happens if a node misses its scheduled turn:
+
+### 2. What happens if a packet is missed or delayed?
+
+Describe how the base station will identify a missing packet, handle delayed or duplicate packets, and show the most recent data.
+
+**Agreed method:**
+
+- Detecting a missing packet:
+- Handling a delayed packet:
+- Handling a duplicate packet:
+- Displaying or logging stale data:
+
+### 3. Task owner and implementation file
+
+**Owner(s):**  
+**Library or file name:**  
+**What this code will do:**  
