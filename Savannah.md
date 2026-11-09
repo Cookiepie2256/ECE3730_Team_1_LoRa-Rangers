@@ -120,7 +120,7 @@ The test sketch creates a DHT11Sensor object, initializes the sensor, and repeat
 Insert a readable screenshot or photo of the test output. Add a caption identifying what it shows. Do not include unrelated desktop content.
 
 > **[Insert screenshot or photo here]**
->![alt text](<Screenshot 2026-11-09 130527.png>)
+>![alt text](<DHT11_test_data.png>)
 > *Caption: [Serial Monitor displaying temperature in Celsius and relative humidity measurements obtained from the DHT11 sensor.]*
 
 ## 3. Current Status and Integration Notes
