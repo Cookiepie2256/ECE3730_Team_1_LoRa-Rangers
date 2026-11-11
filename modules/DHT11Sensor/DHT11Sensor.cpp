@@ -4,13 +4,10 @@
 
 // Constructor
 DHT11Sensor::DHT11Sensor(int pin)
-    : _pin(pin), _dht(pin, DHT11), _tempC(0), _humidity(0) {
-}
+    : _pin(pin), _dht(pin, DHT11), _tempC(0), _humidity(0) {}
 
 // Initialize sensor
-void DHT11Sensor::begin() {
-    _dht.begin();
-}
+void DHT11Sensor::begin() { _dht.begin(); }
 
 // Read sensor data
 bool DHT11Sensor::readSensor() {
@@ -31,11 +28,7 @@ bool DHT11Sensor::readSensor() {
 }
 
 // Return temperature in Celsius
-int16_t DHT11Sensor::getTempC() const {
-    return _tempC;
-}
+int16_t DHT11Sensor::getTempC() const { return _tempC; }
 
 // Return relative humidity
-uint16_t DHT11Sensor::getHumidity() const {
-    return _humidity;
-}
+uint16_t DHT11Sensor::getHumidity() const { return _humidity; }

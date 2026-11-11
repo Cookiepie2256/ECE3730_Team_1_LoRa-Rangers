@@ -3,18 +3,18 @@
 #define DHT11SENSOR_H
 
 #include <Arduino.h>
+#include <DHT.h> // installed Adafruits DHT sensor library to make life easier
 #include <stdint.h>
-#include <DHT.h>    // installed Adafruits DHT sensor library to make life easier
 
 class DHT11Sensor {
-private:
+  private:
     const int _pin;
     DHT _dht;
 
     int16_t _tempC;
     uint16_t _humidity;
 
-public:
+  public:
     // Constructor
     DHT11Sensor(int pin);
 
