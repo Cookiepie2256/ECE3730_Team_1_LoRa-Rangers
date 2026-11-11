@@ -1,0 +1,15 @@
+# clangd settings for the ESP32 Arduino toolchain.
+# Compile commands come from `just lsp`, which writes
+# modules/<sketch>/build/compile_commands.json for each sketch.
+CompileFlags:
+  Add:
+    # Keep the host's /usr/include out; the ESP32 toolchain has its own libc.
+    - -nostdlibinc
+  Remove:
+    # GCC/Xtensa-only flags that clang doesn't understand.
+    - -mlongcalls
+    - -mdisable-hardware-atomics
+    - -mfix-esp32-psram-cache-issue
+    - -mfix-esp32-psram-cache-strategy=*
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
