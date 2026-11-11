@@ -2,6 +2,7 @@
 # Requires `just` and `arduino-cli` on your PATH.
 #   just setup                  install the ESP32 core and all libraries
 #   just compile DHT11Sensor    compile one sketch in modules/
+#   just fmt                    format all code (needs clang-format)
 
 [windows]
 set shell := ["powershell.exe", "-NoLogo", "-Command"]
@@ -38,3 +39,11 @@ lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb
 # Generate modules/<sketch>/build/compile_commands.json for one sketch
 compiledb sketch:
     -arduino-cli compile --fqbn {{ fqbn }} --only-compilation-database --build-path modules/{{ sketch }}/build modules/{{ sketch }}
+
+[unix]
+fmt:
+    clang-format -i $(git ls-files --cached --others --exclude-standard '*.cpp' '*.h')
+
+[windows]
+fmt:
+    clang-format -i (git ls-files --cached --others --exclude-standard '*.cpp' '*.h')
