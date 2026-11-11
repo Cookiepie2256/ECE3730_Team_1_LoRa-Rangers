@@ -48,7 +48,7 @@ def parse_data_line(line: str):
     """Return the field values of a [CSVDATA] line, or None if it isn't one."""
     if not line.startswith(PREFIX):
         return None
-    values = line[len(PREFIX):].strip().split(",")
+    values = line[len(PREFIX) :].strip().split(",")
     if len(values) != len(FIELDS):
         raise ValueError(f"expected {len(FIELDS)} fields, got {len(values)}")
     return values
@@ -65,6 +65,28 @@ def open_csv(path: Path):
     return f, writer
 
 
+def handle_line(raw: bytes, f, writer) -> str:
+    """Process one raw serial line.
+
+    Returns "row" if it was written to the CSV, "ignored" for non-data lines
+    (debug output), or "bad" for a [CSVDATA] line with the wrong field count.
+    """
+    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+    try:
+        values = parse_data_line(line)
+    except ValueError as e:
+        print(f"[skipped bad CSVDATA line: {e}] {line}", file=sys.stderr)
+        return "bad"
+    if values is None:
+        print(line)  # Debug output from the ESP32
+        return "ignored"
+    pc_time = datetime.now().isoformat(timespec="seconds")
+    writer.writerow([pc_time, *values])
+    f.flush()  # Keep the file current if the script is killed
+    print(f"[row] {line}")
+    return "row"
+
+
 def record(port: str, baud: int, out_path: Path) -> None:
     f, writer = open_csv(out_path)
     rows = 0
@@ -76,22 +98,8 @@ def record(port: str, baud: int, out_path: Path) -> None:
                 with serial.serial_for_url(port, baudrate=baud, timeout=1) as ser:
                     while True:
                         raw = ser.readline()
-                        if not raw:
-                            continue
-                        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-                        try:
-                            values = parse_data_line(line)
-                        except ValueError as e:
-                            print(f"[skipped bad CSVDATA line: {e}] {line}", file=sys.stderr)
-                            continue
-                        if values is None:
-                            print(line)  # Debug output from the ESP32
-                            continue
-                        pc_time = datetime.now().isoformat(timespec="seconds")
-                        writer.writerow([pc_time, *values])
-                        f.flush()  # Keep the file current if the script is killed
-                        rows += 1
-                        print(f"[row {rows}] {line}")
+                        if raw and handle_line(raw, f, writer) == "row":
+                            rows += 1
             except serial.SerialException as e:
                 print(f"[serial error: {e}; retrying in 2 s]", file=sys.stderr)
                 time.sleep(2)

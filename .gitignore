@@ -1,2 +1,4 @@
 *.o
 build/
+__pycache__/
+test_packets.csv

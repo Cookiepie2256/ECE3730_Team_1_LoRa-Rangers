@@ -54,9 +54,14 @@ compile sketch:
     arduino-cli compile --fqbn {{ fqbn }} modules/{{ sketch }}
 
 # Record packets from the base station into a CSV on this PC (needs uv), e.g.
-#   just log /dev/ttyUSB0       just log COM3 run1.csv
+# just log /dev/ttyUSB0       just log COM3 run1.csv
 log port out="packets.csv":
     uv run tools/serial_to_csv.py {{ port }} --out {{ out }}
+
+# Test the serial -> CSV path: simulated with no args, or against a board
+# running SerialForwarder.ino, e.g. just test /dev/ttyUSB0
+test port="":
+    uv run tools/test_serial_to_csv.py {{ if port == "" { "" } else { "--port " + port } }}
 
 # Generate compile_commands.json for clangd in every sketch (rerun after adding files/libraries)
 lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "PacketCodec") (compiledb "SerialForwarder")
