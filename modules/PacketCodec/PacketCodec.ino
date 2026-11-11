@@ -25,7 +25,28 @@ void loop() {
     Serial.print("         Hex: ");
     PacketCodec::printHexBuffer(txBuffer, written);
 
-    // 2. Simulate Relay Node Interception
+    // 2. Decode the packet (base station side)
+    DecodedPacket decoded;
+    if (PacketCodec::decode(txBuffer, written, decoded)) {
+        Serial.printf("[DECODE] Node %u | Seq %u | t=%ld ms | Hops %u\n",
+                      decoded.nodeId, decoded.seqNum, (long)decoded.timestampMs,
+                      decoded.hops);
+        Serial.printf("[DECODE] Lon %.6f | Lat %.6f | %.1f C | %.1f %%RH | %u mV\n",
+                      decoded.longitude, decoded.latitude, decoded.tempC,
+                      decoded.humPct, decoded.batteryMv);
+    } else {
+        Serial.println("[DECODE] ERROR: Invalid packet (bad length or CRC).");
+    }
+
+    // Corrupt one byte: decode must reject it
+    uint8_t corrupted[PacketCodec::PACKET_SIZE];
+    memcpy(corrupted, txBuffer, written);
+    corrupted[5] ^= 0xFF;
+    if (!PacketCodec::decode(corrupted, written, decoded)) {
+        Serial.println("[TEST]   PASSED: Corrupted packet rejected by decode.");
+    }
+
+    // 3. Simulate Relay Node Interception
     Serial.println("[RELAY]  Simulating intercept at intermediate node...");
     
     if (PacketCodec::decrementHops(txBuffer, written)) {
@@ -35,7 +56,7 @@ void loop() {
         Serial.println("[RELAY]  ERROR: Packet dropped (Invalid CRC or Hops=0).");
     }
 
-    // 3. Simulate Hop Exhaustion
+    // 4. Simulate Hop Exhaustion
     Serial.println("[TEST]   Forcing Hops to 0...");
     txBuffer[28] = 0; 
     txBuffer[31] = PacketCodec::computeChecksum(txBuffer, 31); // fix checksum so it doesn't fail on CRC

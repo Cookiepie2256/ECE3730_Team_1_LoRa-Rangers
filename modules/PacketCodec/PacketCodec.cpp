@@ -31,6 +31,34 @@ uint8_t PacketCodec::encode(uint16_t nodeId, uint16_t seqNum,
     return sizeof(AgreedPacket);
 }
 
+bool PacketCodec::decode(const uint8_t *packetBuffer, uint8_t len,
+                         DecodedPacket &out) {
+    if (packetBuffer == nullptr || len != sizeof(AgreedPacket)) {
+        return false;
+    }
+
+    AgreedPacket pkt;
+    memcpy(&pkt, packetBuffer, sizeof(AgreedPacket));
+
+    uint8_t expectedCrc =
+        computeChecksum((const uint8_t *)&pkt, sizeof(AgreedPacket) - 1);
+    if (pkt.checksum != expectedCrc) {
+        return false; // Corrupted packet
+    }
+
+    out.nodeId = pkt.nodeId;
+    out.seqNum = pkt.seqNum;
+    out.timestampMs = pkt.timestampMs;
+    out.longitude = pkt.longitude;
+    out.latitude = pkt.latitude;
+    out.tempC = pkt.temperature / 10.0f;
+    out.humPct = pkt.humidity / 10.0f;
+    out.hops = pkt.hops;
+    out.batteryMv = pkt.batteryMv;
+
+    return true;
+}
+
 bool PacketCodec::decrementHops(uint8_t *packetBuffer, uint8_t len) {
     if (packetBuffer == nullptr || len != sizeof(AgreedPacket)) {
         return false;

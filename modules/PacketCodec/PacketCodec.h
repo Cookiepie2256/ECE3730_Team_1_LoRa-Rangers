@@ -17,6 +17,19 @@ struct __attribute__((packed)) AgreedPacket {
     uint8_t checksum;    // 1 byte:  CRC-8 checksum over the first 31 bytes
 };
 
+// Packet contents unpacked back into real units
+struct DecodedPacket {
+    uint16_t nodeId;
+    uint16_t seqNum;
+    int32_t timestampMs;
+    double longitude;
+    double latitude;
+    float tempC;  // Degrees Celsius
+    float humPct; // Relative humidity (%)
+    uint8_t hops;
+    uint16_t batteryMv;
+};
+
 class PacketCodec {
   public:
     static const uint8_t PACKET_SIZE = sizeof(AgreedPacket); // 32 bytes
@@ -26,6 +39,12 @@ class PacketCodec {
     static uint8_t encode(uint16_t nodeId, uint16_t seqNum, int32_t timestampMs,
                           double lon, double lat, float tempC, float humPct,
                           uint8_t hops, uint16_t batteryMv, uint8_t *outBuffer);
+
+    // Validates the length and checksum, then unpacks the buffer into `out`
+    // with temperature and humidity scaled back to real units. Returns false
+    // (leaving `out` untouched) if the packet is invalid.
+    static bool decode(const uint8_t *packetBuffer, uint8_t len,
+                       DecodedPacket &out);
 
     // Validates the checksum, decrements the hop count, and recalculates the
     // checksum in-place
