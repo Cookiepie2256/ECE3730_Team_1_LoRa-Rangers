@@ -143,7 +143,7 @@ static void testMalformedCsv() {
     CHECK(!d.updateFromCsv(tooLong.c_str(), 1000));
 
     for (uint16_t id = 1; id <= DASH_MAX_NODES; id++) {
-        CHECK(!d.getNode(id)->hasData); // nothing was stored
+        CHECK(d.getNode(id) == nullptr); // nothing was stored
     }
     CHECK(d.lastUid() == 0);
 }
@@ -153,15 +153,55 @@ static void testBadNodeIds() {
     UpdateResult res = UpdateResult::NEW;
     CHECK(!d.updateFromCsv("0,1,1000,37.2,-113.6,25,31,3,3950,-92", 1000, &res));
     CHECK(res == UpdateResult::BAD_NODE);
+    CHECK(d.update(reading(0, 1, 0), 0) == UpdateResult::BAD_NODE);
+    CHECK(d.getNode(0) == nullptr);
+    CHECK(d.lastUid() == 0);
+
+    // A 4th node is rejected once 3 others own every slot
+    CHECK(d.update(reading(0xBB01, 1, 0), 0) == UpdateResult::NEW);
+    CHECK(d.update(reading(0xBB02, 1, 0), 0) == UpdateResult::NEW);
+    CHECK(d.update(reading(0xBB03, 1, 0), 0) == UpdateResult::NEW);
     res = UpdateResult::NEW;
     CHECK(!d.updateFromCsv("4,1,1000,37.2,-113.6,25,31,3,3950,-92", 1000, &res));
     CHECK(res == UpdateResult::BAD_NODE);
-    CHECK(d.update(reading(0, 1, 0), 0) == UpdateResult::BAD_NODE);
-    CHECK(d.update(reading(4, 1, 0), 0) == UpdateResult::BAD_NODE);
-    CHECK(d.getNode(0) == nullptr);
+    CHECK(d.update(reading(0xBB04, 1, 0), 0) == UpdateResult::BAD_NODE);
     CHECK(d.getNode(4) == nullptr);
-    CHECK(d.getStatus(4, 0) == NodeStatus::NO_DATA);
-    CHECK(d.lastUid() == 0);
+    CHECK(d.getNode(0xBB04) == nullptr);
+    CHECK(d.getStatus(0xBB04, 0) == NodeStatus::NO_DATA);
+    CHECK(d.lastUid() == 3);
+    // Known nodes keep working
+    CHECK(d.update(reading(0xBB02, 2, 30000), 30000) == UpdateResult::NEW);
+}
+
+// MAC-based node IDs (NodeId::get()) get page slots on first contact
+static void testSlotAssignment() {
+    WebDashboard d;
+    CHECK(d.update(reading(2, 1, 0), 0) == UpdateResult::NEW);
+    CHECK(d.slotOf(2) == 2); // small IDs keep their own slot
+    CHECK(d.update(reading(0xBB01, 1, 0), 0) == UpdateResult::NEW);
+    CHECK(d.slotOf(0xBB01) == 1); // first free slot
+    CHECK(d.update(reading(1, 1, 0), 0) == UpdateResult::NEW);
+    CHECK(d.slotOf(1) == 3); // slot 1 is taken, so the next free one
+    CHECK(d.slotOf(0xBB02) == 0);
+
+    const NodeState *s = d.getNode(0xBB01);
+    CHECK(s != nullptr && s->hasData && s->nodeId == 0xBB01);
+    CHECK(d.update(reading(0xBB01, 3, 60000), 60000) == UpdateResult::GAP);
+    CHECK(s->missed == 1);
+    CHECK(d.getStatus(0xBB01, 60000) == NodeStatus::OK);
+
+    CHECK(d.updateFromCsv("48003,7,1000,37.2,-113.6,25,31,3,3950,-92", 1000) ==
+          false); // all 3 slots in use
+
+    char buf[200];
+    CHECK(d.logLine(0xBB01, buf, sizeof(buf)) > 0);
+    CHECK(std::strstr(buf, ",47873,3,GAP,") != nullptr);
+
+    std::string j = json(d, 60000, 0);
+    CHECK(j.find("{\"id\":1,\"status\":\"OK\",\"nodeId\":47873,") != std::string::npos);
+    CHECK(j.find("{\"id\":3,\"status\":\"LATE\",\"nodeId\":1,") != std::string::npos);
+    CHECK(j.find("\"node\":1,\"nodeId\":47873,\"seq\":3,") != std::string::npos);
+    saveJson("json_mac_ids", j.c_str());
 }
 
 static void testGap() {
@@ -455,7 +495,8 @@ int main(int argc, char **argv) {
     } tests[] = {
         {"valid CSV", testValidCsv},
         {"malformed CSV", testMalformedCsv},
-        {"node IDs 0 and 4", testBadNodeIds},
+        {"node ID 0, slots full", testBadNodeIds},
+        {"MAC node IDs get slots", testSlotAssignment},
         {"gap", testGap},
         {"duplicate", testDuplicate},
         {"old packet", testOldPacket},

@@ -73,24 +73,28 @@ class Dashboard:
     def __init__(self, late_ms, lost_ms, mode):
         self.late_ms, self.lost_ms, self.mode = late_ms, lost_ms, mode
         self.boot_id = random.randint(1, 0x7FFFFFFF)  # new on every restart
-        self.nodes = {n: self._empty() for n in range(1, MAX_NODES + 1)}
+        self.nodes = {n: self._empty() for n in range(1, MAX_NODES + 1)}  # by slot
         self.history = []
         self.next_uid = 1
         self.lock = threading.Lock()
 
     @staticmethod
     def _empty():
-        return {"last": None, "rx": 0, "received": 0, "missed": 0,
+        return {"id": 0, "last": None, "rx": 0, "received": 0, "missed": 0,
                 "duplicates": 0, "old": 0, "reboots": 0}
 
     def update(self, r, now):
         with self.lock:
-            if not 1 <= r["node"] <= MAX_NODES:
+            if r["node"] == 0:
                 return "BAD_NODE"
-            st = self.nodes[r["node"]]
+            slot = self._slot_of(r["node"])
+            if slot == 0:
+                slot = self._claim(r["node"])
+                if slot == 0:
+                    return "BAD_NODE"  # every slot belongs to another node
+                return self._accept(slot, r, "NEW", now)
+            st = self.nodes[slot]
             last = st["last"]
-            if last is None:
-                return self._accept(st, r, "NEW", now)
             fwd = (r["seq"] - last["seq"]) & 0xFFFF
             back = (last["seq"] - r["seq"]) & 0xFFFF
             clock_back = r["elapsedMs"] + CLOCK_SLACK_MS < last["elapsedMs"]
@@ -102,16 +106,32 @@ class Dashboard:
                 return "OLD"
             if fwd == 0 or clock_back or fwd - 1 > MAX_GAP:
                 st["reboots"] += 1
-                return self._accept(st, r, "NEW", now)
+                return self._accept(slot, r, "NEW", now)
             if fwd > 1:
                 st["missed"] += fwd - 1
-                return self._accept(st, r, "GAP", now)
-            return self._accept(st, r, "NEW", now)
+                return self._accept(slot, r, "GAP", now)
+            return self._accept(slot, r, "NEW", now)
 
-    def _accept(self, st, r, result, now):
+    def _slot_of(self, node_id):
+        return next((s for s, st in self.nodes.items() if st["id"] == node_id), 0)
+
+    def _claim(self, node_id):
+        # Same rule as WebDashboard::claimSlot: ID N keeps slot N if it is free
+        if node_id <= MAX_NODES and self.nodes[node_id]["id"] == 0:
+            self.nodes[node_id]["id"] = node_id
+            return node_id
+        for s, st in self.nodes.items():
+            if st["id"] == 0:
+                st["id"] = node_id
+                return s
+        return 0
+
+    def _accept(self, slot, r, result, now):
+        st = self.nodes[slot]
         st.update(last=r, rx=now)
         st["received"] += 1
-        self.history.append({"uid": self.next_uid, "result": result, "rx": now, "r": r})
+        self.history.append({"uid": self.next_uid, "result": result, "rx": now,
+                             "slot": slot, "r": r})
         self.history = self.history[-HISTORY:]
         self.next_uid += 1
         return result
@@ -135,6 +155,8 @@ class Dashboard:
             nodes = []
             for n, st in self.nodes.items():
                 item = {"id": n, "status": self.status(st, now)}
+                if st["id"]:
+                    item["nodeId"] = st["id"]
                 if st["last"] is not None:
                     r = st["last"]
                     item.update(ageMs=now - st["rx"], seq=r["seq"], elapsedMs=r["elapsedMs"])
@@ -146,7 +168,8 @@ class Dashboard:
             for p in self.history:
                 if p["uid"] > since:
                     r = p["r"]
-                    packets.append({"uid": p["uid"], "node": r["node"], "seq": r["seq"],
+                    packets.append({"uid": p["uid"], "node": p["slot"], "nodeId": r["node"],
+                                    "seq": r["seq"],
                                     "result": p["result"], "receivedAtMs": p["rx"],
                                     "elapsedMs": r["elapsedMs"], **self._fields(r)})
             out = {"nowMs": now, "uptimeMs": now, "bootId": self.boot_id,

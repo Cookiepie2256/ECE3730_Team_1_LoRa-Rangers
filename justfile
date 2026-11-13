@@ -64,7 +64,7 @@ test port="":
     uv run tools/test_serial_to_csv.py {{ if port == "" { "" } else { "--port " + port } }}
 
 # Generate compile_commands.json for clangd in every sketch (rerun after adding files/libraries)
-lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "PacketCodec") (compiledb "SerialForwarder")
+lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "NodeId") (compiledb "PacketCodec") (compiledb "SerialForwarder")
 
 # Generate modules/<sketch>/build/compile_commands.json for one sketch
 compiledb sketch:

@@ -129,6 +129,15 @@ dashboard.updateFromCsv(line, millis());
 The CSV field order is exactly the `SerialForwarder` order:
 `node_id,seq,elapsed_ms,latitude,longitude,temp_c,humidity_pct,hops,battery_mv,rssi_dbm`.
 
+### Node IDs
+
+Nodes can use any ID except 0. Normally each node sends `NodeId::get()` (see
+`modules/NodeId`), the last 2 bytes of its factory MAC address, so every board
+runs the same firmware. The page has 3 slots. The first time an ID is heard it
+gets slot N if the ID is N (1..3) and that slot is free, otherwise the first
+free slot. MAC-based IDs show in hex, e.g. "Node BB01". Slots last until the
+base station restarts, and rescuer names follow the node ID, not the slot.
+
 The receive loop must not block for long (no long `delay()`), or the web page
 stops updating.
 
@@ -140,7 +149,7 @@ stops updating.
 | `GAP` | Sequence jumped ahead (e.g. 4 → 7) | Stored; the skipped ones count as missed |
 | `DUPLICATE` | Same sequence number again (e.g. heard twice via a relay) | Counted, ignored |
 | `OLD` | Up to 64 behind the latest (arrived late) | Counted, ignored |
-| `BAD_NODE` | Node ID not 1..3 | Rejected |
+| `BAD_NODE` | Node ID 0, or all 3 slots taken by other nodes | Rejected |
 
 The sequence number wraps from 65535 to 0 normally. If a node restarts (its
 `elapsed_ms` goes backwards, or the sequence jumps by more than 1000), the
@@ -157,7 +166,7 @@ Defined in `WebDashboard.h`. Override any of them with a `#define` before the in
 
 | Define | Default | Meaning |
 |---|---|---|
-| `DASH_MAX_NODES` | 3 | Node IDs 1..N |
+| `DASH_MAX_NODES` | 3 | Node slots on the page |
 | `DASH_LATE_MS` / `DASH_LOST_MS` | 60000 / 150000 | Status thresholds (also `setTimeouts()`) |
 | `DASH_HISTORY` | 64 | Packets kept on the board so a page refresh can rebuild history |
 | `DASH_AP_SSID` / `DASH_AP_PASS` | LoRaRangers-Base / rangers123 | WiFi network |
@@ -169,18 +178,19 @@ Defined in `WebDashboard.h`. Override any of them with a `#define` before the in
 
 ```json
 {"nowMs":123456,"uptimeMs":123456,"bootId":918273645,"lateMs":60000,"lostMs":150000,
- "nodes":[{"id":1,"status":"OK","ageMs":4200,"seq":17,"elapsedMs":512340,
+ "nodes":[{"id":1,"status":"OK","nodeId":47873,"ageMs":4200,"seq":17,"elapsedMs":512340,
    "lat":37.204512,"lng":-113.640231,"temp":25.4,"humidity":31.0,
    "batteryMv":3950,"rssi":-92,"hopLimit":3,
    "received":40,"missed":2,"duplicates":0,"old":0,"reboots":0}],
- "packets":[{"uid":41,"node":2,"seq":17,"result":"NEW","receivedAtMs":120000,
+ "packets":[{"uid":41,"node":1,"nodeId":47873,"seq":17,"result":"NEW","receivedAtMs":120000,
    "elapsedMs":512340,"lat":37.204512,"lng":-113.640231,"temp":25.4,
    "humidity":31.0,"batteryMv":3950,"rssi":-92,"hopLimit":3}],
  "lastId":42,"more":false}
 ```
 
 If everything doesn't fit in the buffer, `more` is `true` and the page asks
-again from `lastId`. `bootId` is random on every power-up. When it changes, the
+again from `lastId`. `id` and `node` are page slots (1..3); `nodeId` is the
+ID the node sent, present once a node owns the slot. `bootId` is random on every power-up. When it changes, the
 page knows the base station restarted and asks again from 0. `"mode"` appears
 only when the sketch sets a label with `setModeLabel()`, as the demo modes do. The browser keeps up to 5000 packets in `localStorage`, so
 a refresh doesn't wipe the history. **Clear history** empties it.
@@ -194,7 +204,7 @@ sh test/run_tests.sh      # macOS / Linux
 
 The tests need `g++` and Python 3. They cover:
 
-- valid and malformed CSV, node IDs 0 and 4
+- valid and malformed CSV, node ID 0, MAC-based IDs and slot assignment
 - gap, duplicate and old packets
 - sequence wrap 65535 → 0, node reboot
 - OK → LATE → LOST timing, including `millis()` wrap
