@@ -2,6 +2,7 @@
 # Requires `just` and `arduino-cli` on your PATH.
 #   just setup                  install the ESP32 core and all libraries
 #   just compile DHT11Sensor    compile one sketch in modules/
+#   just node BaseNode          compile a full node program in nodes/
 #   just fmt                    format all code (needs clang-format)
 #   just log /dev/ttyUSB0       record base station packets to packets.csv (needs uv)
 
@@ -52,6 +53,10 @@ link-libs:
 # Compile one sketch folder in modules/ (e.g. just compile DHT11Sensor)
 compile sketch:
     arduino-cli compile --fqbn {{ fqbn }} modules/{{ sketch }}
+
+# Compile one full node program in nodes/ (e.g. just node BaseNode)
+node sketch:
+    arduino-cli compile --fqbn {{ fqbn }} nodes/{{ sketch }}
 
 # Record packets from the base station into a CSV on this PC (needs uv), e.g.
 # just log /dev/ttyUSB0       just log COM3 run1.csv
