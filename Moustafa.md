@@ -7,7 +7,7 @@ A fun team project with a search-and-rescue connection
 ## Team Members
 | Name | GitHub Username | Responsibility |
 |------|-----------------|----------------|
-| Moustafa Bendari | Moustafa-Bendari | Web dashboard (live display of node data) and presentation |
+| Moustafa Bendari | Moustafa-Bendari | Web dashboard (live display of node data) |
 
 ## Individual Contribution: Moustafa Bendari
 
@@ -26,8 +26,7 @@ The module is in `modules/WebDashboard/`:
 - `WebDashboard.cpp` — Sequence tracking, LATE/LOST status, the 64-packet history ring buffer, CSV parsing, JSON output, and the WiFi access point and web routes (`/`, `/data`).
 - `WebDashboardPage.h` — The web page stored in flash (generated from `web/index.html` by `tools/embed_page.py`).
 - `WebDashboardCodec.h` — `toDashboardReading()`, which turns the team's `DecodedPacket` into a dashboard reading in one call.
-- `WebDashboardDemo.h` / `WebDashboard.ino` — Test sketch with demo modes: 3 simulated rescuers walking near Snow Canyon, Utah, with lost packets, a duplicate, and Node 3 dropping out (LATE → LOST → recovers). The presentation mode (`DASH_DEMO 2`) runs this on a fixed 2.5-minute schedule for class.
-- `DEMO.md` — The class presentation script.
+- `WebDashboardDemo.h` / `WebDashboard.ino` — Test sketch with demo modes: 3 simulated rescuers walking near Snow Canyon, Utah, with lost packets, a duplicate, and Node 3 dropping out (LATE → LOST → recovers).
 - `web/index.html` — The page source (HTML, CSS and JavaScript in one file).
 - `tools/preview_server.py` — Runs the page on a laptop with simulated data, or live from the base station's USB serial output (`--serial COM3`).
 - `test/` — Host tests: C++ compiled with g++ against stub Arduino/WiFi/WebServer headers, and a Python test for the laptop live mode.
@@ -74,14 +73,11 @@ The module is in `modules/WebDashboard/`:
 | ESP32 compile, `esp32:esp32:esp32` (core 3.3.12) | Pass: 983 115 bytes flash (75%), 68 128 bytes RAM (20%) |
 | ESP32 compile, `heltec_wifi_lora_32_V3` | Pass: 939 624 bytes flash (28%), 66 736 bytes RAM (20%) |
 | Browser: all 6 sections, LOST alert, refresh keeps history, phone layout, Sun mode, rescuer names | Pass |
-| Presentation schedule: GAP at 0:35, duplicate by 1:00, Node 3 LOST with alert at 1:46, back with 9 missed at 2:07 | Pass |
 | On real hardware with real packets | Not done yet |
 
 ---
 
-# Individual Library Documentation
-
-**ECE 3730 | Monitoring System Project | Assignment 1**
+# WebDashboard Library Documentation
 
 | Information | Entry |
 |---|---|
@@ -202,15 +198,3 @@ All tests passed
 | **Known issues** | Not yet tested with real packets from the nodes. Times are the viewing device's clock at packet arrival. The board keeps the last 64 packets; longer history is kept in the browser. |
 | **Integration notes** | The CSV order matches Braxton's `SerialForwarder`: `node_id,seq,elapsed_ms,latitude,longitude,temp_c,humidity_pct,hops,battery_mv,rssi_dbm` (hops before battery; temperature and humidity are decimals). Integration is one line in the base station receive loop: `dashboard.update(toDashboardReading(pkt, rssi), millis());`. WiFi and LoRa run at the same time on the ESP32. |
 | **Next step** | Add that line to the base station receive sketch with Braxton, then test with real packets from all three nodes. |
-
-## Submission Checklist
-
-- [x] Completed report with screenshot and test output
-- [x] Library header file (`WebDashboard.h`) and implementation file (`WebDashboard.cpp`)
-- [x] Test sketch (`WebDashboard.ino`) that calls the library's public functions
-- [ ] Short demonstration video showing the library working
-- [x] All files pushed to the team GitHub repository (`modules/WebDashboard/`)
-
----
-
-*ECE 3730 | Individual Library Documentation*
