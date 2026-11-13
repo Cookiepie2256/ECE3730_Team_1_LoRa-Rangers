@@ -2,7 +2,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <RadioLib.h>          // Install via Arduino Library Manager
+#include <RadioLib.h>          // Must be version 6.6.2!
 
 // Your custom libraries
 #include "TelemetryGPS2.h"
@@ -23,16 +23,17 @@
 #define LORA_NRST 12
 #define LORA_BUSY 13
 
-// GPS (Moved away from OLED pins!)
+// GPS (Safely away from OLED pins)
 #define GPS_RX_PIN 47
 #define GPS_TX_PIN 48
+#define PPS_PIN 46
 
 // DHT11
 #define DHT_PIN 2
 
-// Battery Monitoring (Heltec V3 specific)
+// Battery Monitoring (Heltec V3.2 specific)
 #define BAT_ADC_PIN 1
-#define BAT_CTRL_PIN 37 // Must be pulled LOW to read battery
+#define BAT_CTRL_PIN 37 
 
 // --- Object Instantiation ---
 
@@ -41,22 +42,33 @@ SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_NRST, LORA_BUSY);
 TelemetryGPS myGps(Serial2, GPS_RX_PIN, GPS_TX_PIN, 9600);
 DHT11Sensor mySensor(DHT_PIN);
 
-// --- Telemetry State ---
+// --- Telemetry & State ---
 const uint16_t THIS_NODE_ID = 1;
 uint16_t currentSequence = 1;
 unsigned long lastTxTime = 0;
 const unsigned long TX_INTERVAL = 15000; // 15 seconds
 
-// Helper function to read the internal battery voltage on the Heltec V3
+volatile unsigned long lastPpsMicros = 0;
+volatile bool ppsTriggered = false;
+
+// The PPS interrupt must be stored in fast RAM
+void IRAM_ATTR onPpsPulse() {
+    lastPpsMicros = micros();
+    ppsTriggered = true;
+}
+
+// Helper function to read the internal battery voltage on the NEW Heltec V3.2
 uint16_t getBatteryMillivolts() {
-    digitalWrite(BAT_CTRL_PIN, LOW); // Turn on the voltage divider
-    delay(10);                       // Allow voltage to stabilize
-    int adcVal = analogRead(BAT_ADC_PIN);
-    digitalWrite(BAT_CTRL_PIN, HIGH); // Turn it back off to save power
+    digitalWrite(BAT_CTRL_PIN, HIGH); // NEW V3.2: Pull HIGH to turn ON the divider
+    delay(10);                        // Allow voltage to stabilize
     
-    // V3 uses a 390k/100k voltage divider. 
-    // 3.3V reference / 4095 (12-bit ADC) * 4.9 (divider ratio) * 1000 = ~3.948 multiplier
-    return (uint16_t)(adcVal * 3.948); 
+    // Read the voltage directly at the pin using the ESP32's factory calibration
+    float pinMv = analogReadMilliVolts(BAT_ADC_PIN);
+    
+    digitalWrite(BAT_CTRL_PIN, LOW);  // NEW V3.2: Pull LOW to turn it back OFF
+    
+    // The board uses a 100k / 390k resistor divider (ratio of 4.9)
+    return (uint16_t)(pinMv * 4.9); 
 }
 
 void setup() {
@@ -80,20 +92,24 @@ void setup() {
     display.println("System Booting...");
     display.display();
 
-    // 3. Initialize Battery Control Pin
+    // 3. Initialize Battery Control Pin (OFF by default to save power)
     pinMode(BAT_CTRL_PIN, OUTPUT);
-    digitalWrite(BAT_CTRL_PIN, HIGH); // Keep divider off by default
-    analogReadResolution(12);         // Ensure 12-bit ADC for battery math
+    digitalWrite(BAT_CTRL_PIN, LOW); 
+    analogReadResolution(12);         
 
     // 4. Initialize Sensors
     myGps.begin();
     mySensor.begin();
 
-    // 5. Initialize LoRa Radio
+    // 5. Initialize GPS PPS Interrupt
+    pinMode(PPS_PIN, INPUT);
+    attachInterrupt(digitalPinToInterrupt(PPS_PIN), onPpsPulse, RISING); 
+
+    // 6. Initialize LoRa Radio
     display.println("Starting LoRa...");
     display.display();
     
-    // Set frequency to 915.0 MHz (US frequency block for your MakerHawk antenna)
+    // Set frequency to 915.0 MHz (US frequency block)
     // 125 kHz bandwidth, SF 7, CR 4/5, Sync Word 0x12, Power 10 dBm
     int state = radio.begin(915.0, 125.0, 7, 5, 0x12, 10, 8, 1.6, false);
     
@@ -111,6 +127,14 @@ void loop() {
     // Keep feeding the GPS parser constantly
     myGps.update();
 
+    // Handle the microsecond PPS timing pulse
+    if (ppsTriggered) {
+        ppsTriggered = false;
+        // You can print or use lastPpsMicros here if you want high-precision sync
+        // Serial.printf("PPS: %lu\n", lastPpsMicros);
+    }
+
+    // 15-second Transmission Timer
     if (millis() - lastTxTime >= TX_INTERVAL) {
         lastTxTime = millis();
 
