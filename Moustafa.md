@@ -28,7 +28,7 @@ The module is in `modules/WebDashboard/`:
 - `WebDashboardCodec.h` — `toDashboardReading()`, which turns the team's `DecodedPacket` into a dashboard reading in one call.
 - `WebDashboardDemo.h` / `WebDashboard.ino` — Test sketch with demo modes: 3 simulated rescuers walking near Snow Canyon, Utah, with lost packets, a duplicate, and Node 3 dropping out (LATE → LOST → recovers).
 - `web/index.html` — The page source (HTML, CSS and JavaScript in one file).
-- `tools/preview_server.py` — Runs the page on a laptop with simulated data, or live from the base station's USB serial output (`--serial COM3`).
+- `tools/preview_server.py` — Runs the page on a laptop from the CSV that `just log` records (`packets.csv`), live from the base station's USB serial output (`--serial COM3`), or with simulated data (`--demo`).
 - `test/` — Host tests: C++ compiled with g++ against stub Arduino/WiFi/WebServer headers, and a Python test for the laptop live mode.
 - `docs/dashboard.png` — Screenshot of the dashboard used in this report.
 
@@ -48,7 +48,7 @@ The module is in `modules/WebDashboard/`:
 ### My Test Plan
 - **Host tests (no hardware):** compile the library with g++ and stub ESP32 headers, then feed it readings and CSV lines. Check the result of each, the counters, the node status at exact times, and the JSON output.
 - **JSON validity:** every JSON response the tests produce is checked with `python -m json.tool`, including responses built in buffers that are deliberately too small.
-- **Browser preview (no hardware):** run `tools/preview_server.py` and check every section of the page with simulated data, on a laptop-sized and a phone-sized screen.
+- **Browser preview (no hardware):** run `tools/preview_server.py --demo` and check every section of the page with simulated data, on a laptop-sized and a phone-sized screen.
 - **ESP32 compile:** `arduino-cli compile` for the team's board (`esp32:esp32:esp32`) and the Heltec V3.
 - **On hardware (next):** flash `WebDashboard.ino`, join `LoRaRangers-Base`, open `192.168.4.1`, then add the one `update()` line to the base station receive code and test with real packets.
 

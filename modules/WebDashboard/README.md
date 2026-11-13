@@ -38,30 +38,64 @@ Node status: **OK**, **LATE** after 60 s without a packet, **LOST** after 150 s
 | `DEMO.md` | Class presentation script: setup, schedule, talking points, Q&A |
 | `web/index.html` | Editable page source (HTML + CSS + JS in one file) |
 | `tools/embed_page.py` | Rebuilds `WebDashboardPage.h` from `web/index.html` |
-| `tools/preview_server.py` | Runs the page on a laptop: fake data, or live from the base station's USB serial |
+| `tools/preview_server.py` | Runs the page on a laptop from the base station's CSV log (`packets.csv`); fake data only with `--demo` |
 | `test/` | Host tests (g++ with stub Arduino/WiFi/WebServer headers) |
 
-## Preview on a laptop (no board)
+## Real readings on a laptop (the team's data path)
 
 ```
-python tools/preview_server.py              # opens http://localhost:8000
-python tools/preview_server.py --present    # class presentation schedule
-python tools/preview_server.py --speed 10   # 10x faster, to see LATE/LOST sooner
+[nodes] --LoRa--> [base ESP32] --USB--> just log <port> --> packets.csv --> preview_server.py
+                  PacketCodec + SerialForwarder   tools/serial_to_csv.py     this module
 ```
 
-The preview re-reads `web/index.html` on every refresh, so edit the page and reload.
+Braxton's `just log` owns the serial port and appends one row per packet to
+`packets.csv`. The dashboard server reads that file and keeps following it.
+From the repo root, in two terminals:
+
+```
+just log COM3                                             # terminal 1 (Linux: /dev/ttyUSB0): records packets.csv
+python modules/WebDashboard/tools/preview_server.py       # terminal 2: opens http://localhost:8000
+```
+
+- Start them in either order. New packets show up about half a second after they are written.
+- With no arguments the server follows `packets.csv` in the current folder
+  (standard library only, no install needed).
+- Add `--csv run1.csv` to open another file, including a finished recording.
+  Its nodes show as LOST, because the last packet really is that old.
+- Each packet is shown at its `pc_time`, the time the PC logged it.
+- The server only reads the CSV. Rows that are malformed, have node ID 0,
+  or come from a 4th node are skipped and printed in the terminal.
+- The header badge shows the file in use, e.g. **CSV: packets.csv**.
+
+Expected columns, exactly what `tools/serial_to_csv.py` writes:
+`pc_time,node_id,seq,elapsed_ms,latitude,longitude,temp_c,humidity_pct,hops,battery_mv,rssi_dbm`
+
+**Fake data stays out.** The server never shows fake data unless you pass
+`--demo` or `--present`. The page also drops its stored history whenever the
+data source changes (demo, CSV or serial), so fake packets cannot end up next
+to real ones.
+
+## Preview with fake data (no board)
+
+```
+python tools/preview_server.py --demo             # opens http://localhost:8000
+python tools/preview_server.py --present          # class presentation schedule
+python tools/preview_server.py --demo --speed 10  # 10x faster, to see LATE/LOST sooner
+```
+
+The server re-reads `web/index.html` on every refresh, so edit the page and reload.
 The fake data uses the same scenarios as the board:
 
-- **Realistic** (default, `DASH_DEMO 1`): packets every ~30 s, about 1 in 12 lost, one duplicate at minute 2, and Node 3 out of range from minute 4 to 7 of every 10 minutes.
+- **Realistic** (`--demo`, `DASH_DEMO 1`): packets every ~30 s, about 1 in 12 lost, one duplicate at minute 2, and Node 3 out of range from minute 4 to 7 of every 10 minutes.
 - **Presentation** (`--present`, `DASH_DEMO 2`): 6x faster and fully scripted. GAP at 0:35, duplicate at 0:55, Node 3 LOST around 1:35 and back at 1:55, repeating every 2:30. See [DEMO.md](DEMO.md).
 
 At `--speed` above 1 the times on the charts look squeezed together; that only
 happens in the preview.
 
-### Live readings on a laptop
+### Straight from the serial port (without `just log`)
 
-The same page can also show **real** packets from the base station's USB
-serial output (the `[CSVDATA] ...` lines from Braxton's `SerialForwarder`):
+The server can also read the base station's USB serial output itself (the
+`[CSVDATA] ...` lines from Braxton's `SerialForwarder`):
 
 ```
 python -m pip install pyserial                                  # once
@@ -212,5 +246,7 @@ The tests need `g++` and Python 3. They cover:
 - tiny buffers (no overflow) and paging
 - the mode label, the boot ID and the `since` edge cases
 - `logLine`, and the `/`, `/data` and 404 routes
-- laptop live mode (`test/test_live_feed.py`): the same good and bad CSV lines as
+- laptop modes (`test/test_live_feed.py`): the same good and bad CSV lines as
   the C++ parser, counters, `nan` sent as JSON `null`, and the `--log` CSV format
+- CSV mode: rows in `tools/serial_to_csv.py` format, times taken from `pc_time`,
+  appended and half-written rows, bad rows, a replaced file and long recordings

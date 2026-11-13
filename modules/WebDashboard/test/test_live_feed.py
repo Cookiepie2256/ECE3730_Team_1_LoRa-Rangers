@@ -1,4 +1,5 @@
-"""Tests for the laptop LIVE mode in tools/preview_server.py (standard library).
+"""Tests for the laptop CSV and LIVE modes in tools/preview_server.py
+(standard library; one extra check runs if pyserial is installed).
 
     python test/test_live_feed.py
 """
@@ -103,6 +104,107 @@ def test_mac_ids():
           "packets carry slot and node ID")
 
 
+HEADER = "pc_time,node_id,seq,elapsed_ms,latitude,longitude,temp_c,humidity_pct,hops,battery_mv,rssi_dbm"
+
+
+def csv_row(stamp, node, seq, elapsed=1000, temp="25.4"):
+    return f"{stamp},{node},{seq},{elapsed},37.104000,-113.584000,{temp},36.5,3,3850,-87\r\n"
+
+
+def test_csv_feed():
+    """The CSV written by tools/serial_to_csv.py (`just log`) drives the page."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "packets.csv"
+        feed = ps.CsvFeed(path)
+        check(feed.poll() == 0 and feed.data(0)["lastId"] == 0, "missing file: no data, no crash")
+
+        with path.open("w", newline="", encoding="utf-8") as f:
+            f.write(HEADER + "\r\n")
+            f.write(csv_row("2026-11-13T10:00:00", 1, 1, 1000))
+            f.write(csv_row("2026-11-13T10:00:10", 2, 5, 2000))
+            f.write(csv_row("2026-11-13T10:00:30", 1, 2, 31000))
+            f.write(csv_row("2026-11-13T10:00:40", 2, 8, 32000))    # GAP: 6, 7 missed
+            f.write(csv_row("2026-11-13T10:00:41", 2, 8, 32000))    # DUPLICATE
+            f.write(csv_row("2026-11-13T10:00:42", 0, 1))           # node 0: BAD_NODE
+            f.write("2026-11-13T10:00:43,1,2,3\r\n")                # wrong field count
+            f.write(csv_row("not-a-time", 1, 3))                    # bad pc_time
+            f.write(csv_row("2026-11-13T10:01:00", 3, 1, 500, "nan"))
+            f.write("2026-11-13T10:01:30,1,3,61000,37.1")           # half-written row
+        check(feed.poll() == 6, "6 valid rows read (header, bad and partial rows left out)")
+        d = json.loads(json.dumps(feed.data(0), allow_nan=False))
+        check(d["source"] == "csv" and d["mode"] == "CSV: packets.csv", "source and badge")
+        check(d["lateMs"] == 60000 and d["lostMs"] == 150000, "real thresholds")
+        pk = d["packets"]
+        check([(p["node"], p["seq"], p["result"]) for p in pk]
+              == [(1, 1, "NEW"), (2, 5, "NEW"), (1, 2, "NEW"), (2, 8, "GAP"), (3, 1, "NEW")],
+              "packets and results in file order")
+        check([p["receivedAtMs"] for p in pk] == [0, 10000, 30000, 40000, 60000],
+              "packet times follow pc_time")
+        n1, n2, n3 = d["nodes"]
+        check(n2["missed"] == 2 and n2["duplicates"] == 1 and n2["received"] == 2, "node 2 counters")
+        check(n1["received"] == 2 and n1["seq"] == 2 and n1["batteryMv"] == 3850
+              and n1["rssi"] == -87 and n1["hopLimit"] == 3 and n1["lat"] == 37.104
+              and n1["lng"] == -113.584 and n1["temp"] == 25.4 and n1["humidity"] == 36.5,
+              "node 1 shows the CSV values")
+        check(n3["temp"] is None, "nan temperature sent as null")
+        check(n1["status"] == "LOST" and n1["ageMs"] == d["nowMs"] - 30000,
+              "age and status come from the recorded time")
+        check(feed.skipped == 3, "3 bad rows skipped")
+
+        # `just log` finishes the half-written row and appends another
+        with path.open("a", newline="", encoding="utf-8") as f:
+            f.write("04000,-113.584000,25.5,36.0,3,3849,-88\r\n")
+            f.write(csv_row("2026-11-13T10:02:00", 1, 4, 91000))
+        check(feed.poll() == 2, "appended rows picked up, split row read once complete")
+        d = feed.data(5)
+        check([(p["uid"], p["seq"]) for p in d["packets"]] == [(6, 3), (7, 4)],
+              "only the new rows are sent after `since`")
+        check(feed.poll() == 0, "nothing new: nothing read")
+        check(path.read_text(encoding="utf-8").count("\n") == 12, "the CSV itself is never modified")
+
+        # A new recording replaces the file: start over with a new boot ID
+        boot = feed.dash.boot_id
+        with path.open("w", newline="", encoding="utf-8") as f:
+            f.write(HEADER + "\r\n" + csv_row("2026-11-14T09:00:00", 3, 1))
+        check(feed.poll() == 1, "replaced file reloaded")
+        d = feed.data(0)
+        check(d["lastId"] == 1 and d["packets"][0]["node"] == 3 and d["nodes"][0]["received"] == 0,
+              "old rows are gone after the file is replaced")
+        check(feed.dash.boot_id != boot, "new boot ID tells the page to start over")
+
+        # A long recording is sent in pages of PAGE_SIZE
+        big = Path(tmp) / "big.csv"
+        with big.open("w", newline="", encoding="utf-8") as f:
+            f.write(HEADER + "\r\n")
+            for i in range(1200):
+                f.write(csv_row(f"2026-11-13T{10 + i // 3600:02d}:{i // 60 % 60:02d}:{i % 60:02d}",
+                                i % 3 + 1, i // 3 + 1, i * 1000))
+        feed = ps.CsvFeed(big)
+        check(feed.poll() == 1200, "1200 rows loaded")
+        since, uids, pages = 0, [], 0
+        while True:
+            d = feed.data(since)
+            uids += [p["uid"] for p in d["packets"]]
+            since, pages = d["lastId"], pages + 1
+            if not d["more"]:
+                break
+        check(pages == 3 and uids == list(range(1, 1201)), "3 pages, every packet exactly once")
+        check(all(n["missed"] == 0 and n["received"] == 400 for n in d["nodes"]), "no false gaps")
+
+    try:  # The header must stay the one Braxton's logger writes
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
+        import serial_to_csv
+        check(",".join(serial_to_csv.HEADER) == HEADER
+              and serial_to_csv.FIELDS == ps.CSV_FIELDS, "same columns as tools/serial_to_csv.py")
+    except ImportError:
+        print("  (skipped the tools/serial_to_csv.py column check: pyserial not installed)")
+
+
+def test_sources():
+    check(ps.Simulation(ps.REALISTIC, 1.0).data(0)["source"] == "demo", "demo data is labelled")
+    check(ps.LiveFeed().data(0)["source"] == "serial", "serial data is labelled")
+
+
 def test_demo_json_valid():
     sim = ps.Simulation(ps.PRESENTATION, speed=1.0)
     d = sim.dash.to_json(0, 0)
@@ -111,7 +213,8 @@ def test_demo_json_valid():
 
 
 if __name__ == "__main__":
-    for t in (test_parse, test_feed_and_json, test_mac_ids, test_demo_json_valid):
+    for t in (test_parse, test_feed_and_json, test_mac_ids, test_csv_feed, test_sources,
+              test_demo_json_valid):
         before = failures
         t()
         print(f"{'[PASS]' if failures == before else '[FAIL]'} {t.__name__}")
