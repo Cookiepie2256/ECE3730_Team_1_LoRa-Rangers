@@ -119,6 +119,8 @@ background:linear-gradient(90deg,rgba(239,68,68,.22),rgba(239,68,68,.08));border
 #map .ring{fill:none;stroke-width:2;transform-box:fill-box;transform-origin:center;animation:ring 2s ease-out infinite}
 @keyframes ring{from{transform:scale(1);opacity:.9}to{transform:scale(3.4);opacity:0}}
 #map text{fill:var(--muted);font-size:12px}
+#map .sb{stroke:var(--muted);stroke-width:2}
+#map .na{fill:var(--muted)}
 #map .empty,.chart .empty{fill:var(--dim);font-size:14px;text-anchor:middle}
 .tip{position:absolute;pointer-events:none;padding:8px 10px;border-radius:9px;background:rgba(8,12,17,.95);border:1px solid var(--line2);font-size:12.5px;line-height:1.4;white-space:nowrap;opacity:0;transform:translate(-50%,calc(-100% - 12px));transition:opacity .1s}
 .tip.on{opacity:1}
@@ -153,6 +155,31 @@ td .nd i{width:9px;height:9px;border-radius:50%;background:var(--c)}
 .res.GAP{background:rgba(245,158,11,.2);color:#fcd34d}
 td.empty{text-align:center;color:var(--dim);padding:28px}
 footer{max-width:1440px;margin:0 auto;padding:0 24px 28px;color:var(--dim);font-size:12px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
+.btn[aria-pressed=true]{border-color:#22d3ee;color:#67e8f9}
+.rn{border:0;background:none;color:var(--dim);cursor:pointer;font-size:14px;padding:2px 4px;border-radius:6px}
+.rn:hover{color:var(--text)}
+:focus-visible{outline:2px solid #38bdf8;outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* Sun mode: light, high contrast, readable in direct sunlight */
+[data-theme=sun]{color-scheme:light;--bg:#eef2f6;--panel:#fff;--panel2:#fff;--line:#c3cdd8;--line2:#9fadbc;--text:#0a0f17;--muted:#334155;--dim:#4b5868}
+[data-theme=sun] body{background:var(--bg)}
+[data-theme=sun] .top{background:rgba(255,255,255,.94)}
+[data-theme=sun] .big>div,[data-theme=sun] .chart{background:#f6f8fa}
+[data-theme=sun] .mapwrap{background:#f3f6f9}
+[data-theme=sun] #map .grid line{stroke:#dbe2e9}
+[data-theme=sun] .chart .ax line{stroke:#e3e8ee}
+[data-theme=sun] th{background:#e9eef3}
+[data-theme=sun] td{border-color:#e3e8ee}
+[data-theme=sun] .btn:hover{background:#e9eef3}
+[data-theme=sun] .btn.primary{background:#0e7490;color:#fff}
+[data-theme=sun] .btn[aria-pressed=true]{border-color:#0e7490;color:#0e7490}
+[data-theme=sun] .b-ok,[data-theme=sun] .res{color:#14532d}
+[data-theme=sun] .b-late,[data-theme=sun] .res.GAP,[data-theme=sun] .mode,[data-theme=sun] .mode small{color:#7c2d12}
+[data-theme=sun] .b-none{color:#374151}
+[data-theme=sun] .alert{color:#7f1d1d}
+[data-theme=sun] .alert.warn{color:#78350f}
+[data-theme=sun] .conn.bad{color:#991b1b}
+[data-theme=sun] .tip,[data-theme=sun] select,[data-theme=sun] .seg{background:#fff}
 @media (max-width:1100px){.charts{grid-template-columns:1fr}.chart svg{height:170px}}
 @media (max-width:900px){.cards{grid-template-columns:1fr}}
 @media (max-width:640px){
@@ -179,6 +206,8 @@ footer{padding:0 16px 24px}
 <div class="stat"><label>Base uptime</label><b id="uptime">--</b></div>
 <div class="stat"><label>Packets</label><b id="total">0</b></div>
 <button class="btn primary" id="dl" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>Download CSV</button>
+<button class="btn ghost" id="sound" type="button" aria-pressed="false" title="Beep when a node becomes LOST">Sound off</button>
+<button class="btn ghost" id="sun" type="button" aria-pressed="false" title="Bright high-contrast theme for sunlight">Sun mode</button>
 </div>
 </header>
 <main>
@@ -211,8 +240,12 @@ footer{padding:0 16px 24px}
 <script>
 'use strict';
 var NODES = [1, 2, 3];
-var COLOR = {1: '#22d3ee', 2: '#a78bfa', 3: '#f472b6'};
+var DARK_COLOR = {1: '#22d3ee', 2: '#a78bfa', 3: '#f472b6'};
+var SUN_COLOR = {1: '#0e7490', 2: '#6d28d9', 3: '#be185d'}; // darker for white backgrounds
+var COLOR = DARK_COLOR;
 var KEY = 'loraRangers.history.v1';
+var PREFS_KEY = 'loraRangers.prefs.v1';
+var prefs = {sound: false, sun: false, names: {}};
 var CAP = 5000;          // packets kept in the browser
 var TRAIL = 200;         // map dots per node
 var LOG_ROWS = 200;
@@ -235,6 +268,8 @@ function fD(t) { var d = new Date(t); return d.getFullYear() + '-' + pad(d.getMo
 function fin(v) { return typeof v === 'number' && isFinite(v); }
 function hasFix(p) { return fin(p.lat) && fin(p.lng) && !(p.lat === 0 && p.lng === 0); }
 function fx(v, d) { return fin(v) ? v.toFixed(d) : '--'; }
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+function label(n) { return 'Node ' + n + (prefs.names[n] ? ' · ' + prefs.names[n] : ''); }
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function dur(ms) {
 var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
@@ -251,6 +286,13 @@ try {
 var s = JSON.parse(localStorage.getItem(KEY) || 'null');
 if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; bootId = s.boot || 0; }
 } catch (e) { hist = []; }
+try {
+var p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+if (p) { prefs.sound = !!p.sound; prefs.sun = !!p.sun; prefs.names = p.names || {}; }
+} catch (e) { /* defaults */ }
+}
+function savePrefs() {
+try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* storage blocked */ }
 }
 function save() {
 clearTimeout(saveTimer);
@@ -305,7 +347,23 @@ if (a === null) return 'NO_DATA';
 return a >= lostMs ? 'LOST' : a >= lateMs ? 'LATE' : 'OK';
 }
 var BADGE = {OK: 'b-ok', LATE: 'b-late', LOST: 'b-lost', NO_DATA: 'b-none'};
-var WARN_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18v.5"/></svg>';
+var audio = null, wasLost = {};
+function beep() {
+try {
+audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+if (audio.state === 'suspended') audio.resume();
+[0, 0.35, 0.7].forEach(function (t) {
+var o = audio.createOscillator(), g = audio.createGain(), at = audio.currentTime + t;
+o.type = 'square'; o.frequency.value = 880;
+g.gain.setValueAtTime(0.0001, at);
+g.gain.exponentialRampToValueAtTime(0.2, at + 0.02);
+g.gain.exponentialRampToValueAtTime(0.0001, at + 0.25);
+o.connect(g); g.connect(audio.destination);
+o.start(at); o.stop(at + 0.3);
+});
+} catch (e) { /* no audio support */ }
+}
+var WARN_ICON ='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18v.5"/></svg>';
 function renderHeader() {
 var connected = fails < 3 && everConnected;
 var c = $('#conn');
@@ -320,7 +378,12 @@ NODES.forEach(function (id) {
 var n = nodes[id];
 if (statusOf(n) !== 'LOST') return;
 var where = hasFix(n) ? ' at ' + n.lat.toFixed(4) + ', ' + n.lng.toFixed(4) : ' (no GPS fix)';
-html += '<div class="alert">' + WARN_ICON + '<span>Node ' + id + ' LOST, last seen ' + fT(Date.now() - ageOf(n)) + where + '</span></div>';
+html += '<div class="alert">' + WARN_ICON + '<span>' + esc(label(id)) + ' LOST, last seen ' + fT(Date.now() - ageOf(n)) + where + '</span></div>';
+});
+NODES.forEach(function (id) {
+var lost = statusOf(nodes[id]) === 'LOST';
+if (lost && !wasLost[id] && prefs.sound) beep();
+wasLost[id] = lost;
 });
 var al = $('#alerts');
 if (al.innerHTML !== html) al.innerHTML = html;
@@ -329,7 +392,7 @@ var refs = {};
 function buildCards() {
 $('#cards').innerHTML = NODES.map(function (n) {
 return '<article class="card" id="card' + n + '" style="--c:' + COLOR[n] + '">' +
-'<div class="ch"><div class="nm"><i></i>Node ' + n + '</div><span class="badge b-none" data-f="status">NO DATA</span></div>' +
+'<div class="ch"><div class="nm"><i></i><span data-f="name">Node ' + n + '</span><button type="button" class="rn" data-rename="' + n + '" title="Name this rescuer" aria-label="Name Node ' + n + '">✎</button></div><span class="badge b-none" data-f="status">NO DATA</span></div>' +
 '<div class="big"><div><span class="v" data-f="temp">--</span><span class="u">°C</span><small>Temperature</small></div>' +
 '<div><span class="v" data-f="hum">--</span><span class="u">%</span><small>Humidity</small></div></div>' +
 '<dl class="kv">' +
@@ -354,6 +417,7 @@ function renderCards() {
 NODES.forEach(function (id) {
 var n = nodes[id], R = refs[id], st = statusOf(n);
 R.card.className = 'card' + (st === 'LOST' ? ' s-lost' : '');
+set(R.name, label(id));
 R.status.className = 'badge ' + BADGE[st];
 set(R.status, st === 'NO_DATA' ? 'NO DATA' : st);
 if (n) set(R.counts, n.received + ' / ' + n.missed + ' / ' + n.duplicates);
@@ -393,7 +457,7 @@ done(ok);
 }
 function buildToggles() {
 $('#toggles').innerHTML = NODES.map(function (n) {
-return '<button type="button" class="chip" style="--c:' + COLOR[n] + '" data-node="' + n + '"><i></i>Node ' + n + '</button>';
+return '<button type="button" class="chip' + (hidden[n] ? ' off' : '') + '" style="--c:' + COLOR[n] + '" data-node="' + n + '" aria-pressed="' + !hidden[n] + '"><i></i>' + esc(label(n)) + '</button>';
 }).join('');
 }
 function renderMap() {
@@ -437,9 +501,9 @@ out += '<circle class="pt" data-i="' + (mapPts.length - 1) + '" cx="' + x + '" c
 });
 });
 var len = nice(W * 0.22 / sc, true), px = len * sc, by = H - 22;
-out += '<g stroke="#c9d6e3" stroke-width="2"><line x1="18" y1="' + by + '" x2="' + (18 + px).toFixed(1) + '" y2="' + by + '"/><line x1="18" y1="' + (by - 5) + '" x2="18" y2="' + (by + 5) + '"/><line x1="' + (18 + px).toFixed(1) + '" y1="' + (by - 5) + '" x2="' + (18 + px).toFixed(1) + '" y2="' + (by + 5) + '"/></g>';
+out += '<g class="sb"><line x1="18" y1="' + by + '" x2="' + (18 + px).toFixed(1) + '" y2="' + by + '"/><line x1="18" y1="' + (by - 5) + '" x2="18" y2="' + (by + 5) + '"/><line x1="' + (18 + px).toFixed(1) + '" y1="' + (by - 5) + '" x2="' + (18 + px).toFixed(1) + '" y2="' + (by + 5) + '"/></g>';
 out += '<text x="18" y="' + (by - 9) + '">' + (len >= 1000 ? len / 1000 + ' km' : len + ' m') + '</text>';
-out += '<g transform="translate(' + (W - 30) + ',34)"><path d="M0-18 8 6 0 1-8 6z" fill="#c9d6e3"/><text y="22" text-anchor="middle" style="font-weight:700">N</text></g>';
+out += '<g transform="translate(' + (W - 30) + ',34)"><path class="na" d="M0-18 8 6 0 1-8 6z"/><text y="22" text-anchor="middle" style="font-weight:700">N</text></g>';
 svg.innerHTML = out;
 }
 function showTip(e) {
@@ -447,7 +511,7 @@ var tip = $('#tip'), i = e.target.getAttribute && e.target.getAttribute('data-i'
 if (i === null || i === undefined) { tip.className = 'tip'; return; }
 var p = mapPts[+i], wrap = tip.parentNode.getBoundingClientRect(), r = e.target.getBoundingClientRect();
 tip.style.setProperty('--c', COLOR[p.node]);
-tip.innerHTML = '<b>Node ' + p.node + '</b> · update #' + p.uid + '<br>' + fD(p.t) + '<br>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
+tip.innerHTML = '<b>' + esc(label(p.node)) + '</b> · update #' + p.uid + '<br>' + fD(p.t) + '<br>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
 tip.style.left = (r.left + r.width / 2 - wrap.left) + 'px';
 tip.style.top = (r.top - wrap.top) + 'px';
 tip.className = 'tip on';
@@ -583,10 +647,25 @@ var b = e.target.closest('.chip');
 if (!b) return;
 var n = +b.getAttribute('data-node');
 hidden[n] = !hidden[n];
-b.className = 'chip' + (hidden[n] ? ' off' : '');
+buildToggles();
 renderMap(); renderCharts();
 };
+$('#sound').onclick = function () {
+prefs.sound = !prefs.sound; savePrefs(); applyPrefs();
+if (prefs.sound) beep(); // the click also unlocks audio in the browser
+};
+$('#sun').onclick = function () { prefs.sun = !prefs.sun; savePrefs(); applyPrefs(); };
 $('#cards').onclick = function (e) {
+var rn = e.target.closest('[data-rename]');
+if (rn) {
+var id = +rn.getAttribute('data-rename');
+var name = prompt('Rescuer name for Node ' + id + ' (empty to clear):', prefs.names[id] || '');
+if (name === null) return;
+name = name.trim().slice(0, 20);
+if (name) prefs.names[id] = name; else delete prefs.names[id];
+savePrefs(); buildToggles(); renderCards(); renderHeader();
+return;
+}
 var b = e.target.closest('[data-copy]');
 if (!b) return;
 var n = nodes[+b.getAttribute('data-copy')];
@@ -603,8 +682,18 @@ s.addEventListener('mouseleave', chartLeave);
 var rt;
 window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { renderMap(); renderCharts(); }, 150); });
 }
+function applyPrefs() {
+document.documentElement.setAttribute('data-theme', prefs.sun ? 'sun' : 'dark');
+COLOR = prefs.sun ? SUN_COLOR : DARK_COLOR;
+var s = $('#sound'), u = $('#sun');
+s.setAttribute('aria-pressed', prefs.sound); s.textContent = prefs.sound ? 'Sound on' : 'Sound off';
+u.setAttribute('aria-pressed', prefs.sun); u.textContent = prefs.sun ? 'Dark mode' : 'Sun mode';
+buildCards(); buildToggles();
+dirty = true;
+if (fetchedAt) tick();
+}
 load();
-buildCards(); buildToggles(); buildCharts(); wire();
+buildCharts(); applyPrefs(); wire();
 tick();
 setInterval(tick, 1000);
 poll();

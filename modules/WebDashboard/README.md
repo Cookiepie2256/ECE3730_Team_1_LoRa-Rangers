@@ -16,6 +16,13 @@ The dashboard shows:
 5. Temperature, humidity and RSSI charts (10 min / 30 min / All)
 6. A packet log (newest first, filter by node, GAP rows highlighted)
 
+Also on the page:
+- **Sound alarm.** Three beeps when a node turns LOST. Use the **Sound off/on** button; the click is what lets the browser play sound.
+- **Rescuer names.** Click ✎ on a card to name the person carrying that node, e.g. "Node 3 · Sam". The name shows on the card, the map and in alerts.
+- **Sun mode.** A bright, high-contrast theme for reading a phone outdoors.
+
+Names, the theme and the sound setting are saved in the browser, and so is the packet history.
+
 Node status: **OK**, **LATE** after 60 s without a packet, **LOST** after 150 s
 (nodes send every ~30 s), **NO DATA** before the first packet.
 
@@ -31,7 +38,7 @@ Node status: **OK**, **LATE** after 60 s without a packet, **LOST** after 150 s
 | `DEMO.md` | Class presentation script: setup, schedule, talking points, Q&A |
 | `web/index.html` | Editable page source (HTML + CSS + JS in one file) |
 | `tools/embed_page.py` | Rebuilds `WebDashboardPage.h` from `web/index.html` |
-| `tools/preview_server.py` | Runs the page on a laptop with fake data, no board needed |
+| `tools/preview_server.py` | Runs the page on a laptop: fake data, or live from the base station's USB serial |
 | `test/` | Host tests (g++ with stub Arduino/WiFi/WebServer headers) |
 
 ## Preview on a laptop (no board)
@@ -50,6 +57,21 @@ The fake data uses the same scenarios as the board:
 
 At `--speed` above 1 the times on the charts look squeezed together; that only
 happens in the preview.
+
+### Live readings on a laptop
+
+The same page can also show **real** packets from the base station's USB
+serial output (the `[CSVDATA] ...` lines from Braxton's `SerialForwarder`):
+
+```
+python -m pip install pyserial                                  # once
+python tools/preview_server.py --serial COM3 --log packets.csv  # Windows (Linux: /dev/ttyUSB0)
+python tools/preview_server.py --stdin                          # or type/paste lines yourself
+```
+
+It uses the real thresholds (LATE 60 s, LOST 150 s). Only one program can open
+a serial port, so close the Arduino Serial Monitor and `just log` first.
+`--log` writes the same CSV columns as `just log`.
 
 After editing the page, rebuild the header before flashing:
 
@@ -180,3 +202,5 @@ The tests need `g++` and Python 3. They cover:
 - tiny buffers (no overflow) and paging
 - the mode label, the boot ID and the `since` edge cases
 - `logLine`, and the `/`, `/data` and 404 routes
+- laptop live mode (`test/test_live_feed.py`): the same good and bad CSV lines as
+  the C++ parser, counters, `nan` sent as JSON `null`, and the `--log` CSV format

@@ -15,4 +15,5 @@ for %%f in (%OUT%\*.json) do (
     python -m json.tool "%%f" >nul || (echo invalid JSON: %%f & exit /b 1)
 )
 echo JSON check: every file is valid (python -m json.tool)
+python test\test_live_feed.py || exit /b 1
 echo All tests passed

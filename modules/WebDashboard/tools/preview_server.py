@@ -1,8 +1,16 @@
-"""Preview the dashboard on a laptop, no ESP32 needed.
+"""Run the dashboard on a laptop, with fake data or live from the base station.
 
     python tools/preview_server.py              # opens http://localhost:8000
     python tools/preview_server.py --present    # class presentation timeline
     python tools/preview_server.py --speed 10   # 10x faster: LATE/LOST sooner
+    python tools/preview_server.py --serial COM3 [--log packets.csv]   # LIVE
+    python tools/preview_server.py --stdin      # LIVE from typed/pasted lines
+
+LIVE mode reads the base station's USB serial output (Braxton's
+SerialForwarder `[CSVDATA] ...` lines) and shows the real readings. Only one
+program can open a serial port: close the Arduino Serial Monitor and
+`just log` first (use --log to keep a CSV in the same format). --serial needs
+pyserial; everything else is standard library only.
 
 Serves web/index.html (re-read on every request, so edit and refresh) and a
 fake /data endpoint with the same scenarios as WebDashboardDemo.h:
@@ -29,6 +37,7 @@ import argparse
 import json
 import math
 import random
+import sys
 import threading
 import time
 import webbrowser
@@ -115,8 +124,10 @@ class Dashboard:
 
     @staticmethod
     def _fields(r):
-        return {"lat": round(r["lat"], 6), "lng": round(r["lng"], 6),
-                "temp": round(r["temp"], 1), "humidity": round(r["humidity"], 1),
+        def num(v, digits):  # JSON has no NaN: a failed sensor becomes null
+            return round(v, digits) if math.isfinite(v) else None
+        return {"lat": num(r["lat"], 6), "lng": num(r["lng"], 6),
+                "temp": num(r["temp"], 1), "humidity": num(r["humidity"], 1),
                 "batteryMv": r["batteryMv"], "rssi": r["rssi"], "hopLimit": r["hops"]}
 
     def to_json(self, now, since):
@@ -233,6 +244,103 @@ class Simulation:
             return self.dash.to_json(now, since)
 
 
+PREFIX = "[CSVDATA]"
+CSV_FIELDS = ["node_id", "seq", "elapsed_ms", "latitude", "longitude", "temp_c",
+              "humidity_pct", "hops", "battery_mv", "rssi_dbm"]
+REAL_LATE_MS, REAL_LOST_MS = 60_000, 150_000
+
+
+def parse_csv(line, require_prefix=False):
+    """Parse one SerialForwarder line, with the same rules as
+    WebDashboard::updateFromCsv. Returns a reading dict, or None."""
+    s = line.strip()
+    if s.startswith(PREFIX):
+        s = s[len(PREFIX):].strip()
+    elif require_prefix:
+        return None
+    parts = [p.strip() for p in s.split(",")]
+    if len(parts) != len(CSV_FIELDS) or any(not p or "_" in p for p in parts):
+        return None
+    try:
+        node, seq, elapsed = int(parts[0]), int(parts[1]), int(parts[2])
+        lat, lng, temp, hum = (float(p) for p in parts[3:7])
+        hops, batt, rssi = int(parts[7]), int(parts[8]), int(parts[9])
+    except ValueError:
+        return None
+
+    def real(v, lo, hi, allow_nan=False):
+        return (allow_nan and math.isnan(v)) or (math.isfinite(v) and lo <= v <= hi)
+
+    if not (0 <= node <= 65535 and 0 <= seq <= 65535 and -2**31 <= elapsed < 2**31
+            and real(lat, -90, 90) and real(lng, -180, 180)
+            and real(temp, -100, 150, True) and real(hum, 0, 100, True)
+            and 0 <= hops <= 255 and 0 <= batt <= 65535 and -200 <= rssi <= 50):
+        return None
+    return {"node": node, "seq": seq, "elapsedMs": elapsed, "lat": lat, "lng": lng,
+            "temp": temp, "humidity": hum, "hops": hops, "batteryMv": batt, "rssi": rssi}
+
+
+class LiveFeed:
+    """Real packets: lines from the base station's USB serial or typed in."""
+
+    def __init__(self, log_path=None):
+        self.start = time.monotonic()
+        self.dash = Dashboard(REAL_LATE_MS, REAL_LOST_MS, None)
+        self.log = None
+        if log_path:
+            # Same columns as tools/serial_to_csv.py, so the files can be merged
+            new = not Path(log_path).exists() or Path(log_path).stat().st_size == 0
+            self.log = open(log_path, "a", newline="", encoding="utf-8")
+            if new:
+                self.log.write(",".join(["pc_time", *CSV_FIELDS]) + "\n")
+
+    def now_ms(self):
+        return int((time.monotonic() - self.start) * 1000)
+
+    def handle(self, raw, require_prefix):
+        line = raw.rstrip("\r\n")
+        r = parse_csv(line, require_prefix)
+        if r is None:
+            if line.strip().startswith(PREFIX) or (not require_prefix and line.strip()):
+                print(f"[skipped: not a valid CSV line] {line}")
+            elif line.strip():
+                print(line)  # other output from the board (debug prints)
+            return
+        result = self.dash.update(r, self.now_ms())
+        print(f"[{result}] node {r['node']} seq {r['seq']}")
+        if self.log and result != "BAD_NODE":
+            values = line.strip()
+            if values.startswith(PREFIX):
+                values = values[len(PREFIX):].strip()
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+            self.log.write(f"{stamp},{values.replace(' ', '')}\n")
+            self.log.flush()
+
+    def data(self, since):
+        return self.dash.to_json(self.now_ms(), since)
+
+
+def read_serial(port, baud, feed):
+    import serial  # pyserial; checked in main()
+    while True:
+        try:
+            with serial.serial_for_url(port, baudrate=baud, timeout=1) as ser:
+                print(f"Reading {port} @ {baud} baud")
+                while True:
+                    raw = ser.readline()
+                    if raw:
+                        feed.handle(raw.decode("utf-8", errors="replace"), require_prefix=True)
+        except serial.SerialException as e:
+            print(f"[serial error: {e}; retrying in 2 s]")
+            time.sleep(2)
+
+
+def read_stdin(feed):
+    print("Type or paste CSV lines (node_id,seq,elapsed_ms,...). Ctrl+C to stop.")
+    for line in sys.stdin:
+        feed.handle(line, require_prefix=False)
+
+
 def make_handler(sim):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -270,17 +378,38 @@ def main():
                         help="class presentation timeline (6x faster, scripted)")
     parser.add_argument("--speed", type=float, default=1.0,
                         help="run the fake clock faster, e.g. 10")
+    parser.add_argument("--serial", metavar="PORT",
+                        help="LIVE: read [CSVDATA] lines from the base station, e.g. COM3")
+    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--stdin", action="store_true",
+                        help="LIVE: read CSV lines typed or piped into this terminal")
+    parser.add_argument("--log", metavar="FILE",
+                        help="LIVE: also append each packet to a CSV file")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)  # show packets as they arrive
 
-    sc = PRESENTATION if args.present else REALISTIC
-    sim = Simulation(sc, args.speed)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(sim))
+    if args.serial and args.stdin:
+        parser.error("use --serial or --stdin, not both")
     url = f"http://localhost:{args.port}"
-    print(f"Dashboard preview at {url}  ({sc['mode']}, speed x{args.speed:g}, Ctrl+C to stop)")
-    if args.present:
-        print("Timeline: 0:35 GAP | 0:55 duplicate | ~1:20 Node 3 LATE | ~1:35 LOST | "
-              "1:55 back | repeats every 2:30")
+    if args.serial or args.stdin:
+        if args.serial:
+            try:
+                import serial  # noqa: F401
+            except ImportError:
+                parser.error("--serial needs pyserial: python -m pip install pyserial")
+        sim = LiveFeed(args.log)
+        reader = (read_serial, (args.serial, args.baud, sim)) if args.serial else (read_stdin, (sim,))
+        threading.Thread(target=reader[0], args=reader[1], daemon=True).start()
+        print(f"Live dashboard at {url}  (LATE 60 s, LOST 150 s, Ctrl+C to stop)")
+    else:
+        sc = PRESENTATION if args.present else REALISTIC
+        sim = Simulation(sc, args.speed)
+        print(f"Dashboard preview at {url}  ({sc['mode']}, speed x{args.speed:g}, Ctrl+C to stop)")
+        if args.present:
+            print("Timeline: 0:35 GAP | 0:55 duplicate | ~1:20 Node 3 LATE | ~1:35 LOST | "
+                  "1:55 back | repeats every 2:30")
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(sim))
     if not args.no_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
     try:

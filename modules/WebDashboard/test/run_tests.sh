@@ -22,4 +22,5 @@ for f in "$OUT"/*.json; do
     "$PY" -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f"; exit 1; }
 done
 echo "JSON check: every file is valid (python -m json.tool)"
+"$PY" test/test_live_feed.py
 echo "All tests passed"
