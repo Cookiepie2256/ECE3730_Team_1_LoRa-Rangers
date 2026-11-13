@@ -72,7 +72,8 @@ void handleSerialLine(const char *line) {
             printLog(csvNodeId(line));
         }
     } else if (result == UpdateResult::BAD_NODE) {
-        Serial.printf("[DASH] CSV rejected: node ID must be 1..%d\n",
+        Serial.printf("[DASH] CSV rejected: node ID is 0 or all %d node "
+                      "slots are taken\n",
                       DASH_MAX_NODES);
     } else {
         Serial.println("[DASH] CSV rejected: expected node_id,seq,elapsed_ms,"

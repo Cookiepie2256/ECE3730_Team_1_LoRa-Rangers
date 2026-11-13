@@ -269,7 +269,11 @@ function fin(v) { return typeof v === 'number' && isFinite(v); }
 function hasFix(p) { return fin(p.lat) && fin(p.lng) && !(p.lat === 0 && p.lng === 0); }
 function fx(v, d) { return fin(v) ? v.toFixed(d) : '--'; }
 function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
-function label(n) { return 'Node ' + n + (prefs.names[n] ? ' · ' + prefs.names[n] : ''); }
+function rid(slot) { var n = nodes[slot]; return n && n.nodeId ? n.nodeId : slot; }
+function idName(id) { return 'Node ' + (id > 255 ? ('000' + id.toString(16).toUpperCase()).slice(-4) : id); }
+function named(id) { return idName(id) + (prefs.names[id] ? ' · ' + prefs.names[id] : ''); }
+function label(slot) { return named(rid(slot)); }
+function pid(p) { return p.nodeId || p.node; }
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function dur(ms) {
 var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
@@ -323,7 +327,7 @@ bootId = d.bootId || 0;
 var now = Date.now(), added = 0;
 (d.packets || []).forEach(function (p) {
 if (p.uid <= lastId) return;
-hist.push({uid: p.uid, t: now - (d.nowMs - p.receivedAtMs), node: p.node, seq: p.seq, result: p.result,
+hist.push({uid: p.uid, t: now - (d.nowMs - p.receivedAtMs), node: p.node, nodeId: p.nodeId, seq: p.seq, result: p.result,
 lat: p.lat, lng: p.lng, temp: p.temp, humidity: p.humidity, batteryMv: p.batteryMv, rssi: p.rssi});
 added++;
 });
@@ -334,8 +338,10 @@ var mode = $('#mode');
 mode.hidden = !d.mode;
 if (d.mode) mode.textContent = d.mode;
 if (d.mode) mode.insertAdjacentHTML('beforeend', '<small>LATE ' + lateMs / 1000 + ' s · LOST ' + lostMs / 1000 + ' s</small>');
+var ids = NODES.map(rid).join();
 nodes = {};
 (d.nodes || []).forEach(function (n) { nodes[n.id] = n; });
+if (NODES.map(rid).join() !== ids) buildToggles(); // a new node took a slot
 fetchedAt = now;
 if (added) { dirty = true; save(); }
 return false;
@@ -456,6 +462,7 @@ document.body.removeChild(ta);
 done(ok);
 }
 function buildToggles() {
+NODES.forEach(function (n) { var o = $('#filter').options[n]; if (o) o.textContent = idName(rid(n)); });
 $('#toggles').innerHTML = NODES.map(function (n) {
 return '<button type="button" class="chip' + (hidden[n] ? ' off' : '') + '" style="--c:' + COLOR[n] + '" data-node="' + n + '" aria-pressed="' + !hidden[n] + '"><i></i>' + esc(label(n)) + '</button>';
 }).join('');
@@ -511,7 +518,7 @@ var tip = $('#tip'), i = e.target.getAttribute && e.target.getAttribute('data-i'
 if (i === null || i === undefined) { tip.className = 'tip'; return; }
 var p = mapPts[+i], wrap = tip.parentNode.getBoundingClientRect(), r = e.target.getBoundingClientRect();
 tip.style.setProperty('--c', COLOR[p.node]);
-tip.innerHTML = '<b>' + esc(label(p.node)) + '</b> · update #' + p.uid + '<br>' + fD(p.t) + '<br>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
+tip.innerHTML = '<b>' + esc(named(pid(p))) + '</b> · update #' + p.uid + '<br>' + fD(p.t) + '<br>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
 tip.style.left = (r.left + r.width / 2 - wrap.left) + 'px';
 tip.style.top = (r.top - wrap.top) + 'px';
 tip.className = 'tip on';
@@ -604,7 +611,7 @@ if (filterNode && p.node !== filterNode) continue;
 matches++;
 if (rows.length >= LOG_ROWS) continue;
 var res = p.result === 'GAP' ? 'GAP' : 'NEW';
-rows.push('<tr' + (res === 'GAP' ? ' class="gap"' : '') + '><td>' + p.uid + '</td><td>' + fD(p.t) + '</td><td><span class="nd" style="--c:' + COLOR[p.node] + '"><i></i>Node ' + p.node + '</span></td><td>' + p.seq + '</td><td><span class="res ' + res + '">' + res + '</span></td><td>' + fx(p.temp, 1) + '</td><td>' + fx(p.humidity, 0) + '</td><td>' + fx(p.batteryMv / 1000, 2) + '</td><td>' + p.rssi + '</td><td>' + fx(p.lat, 6) + '</td><td>' + fx(p.lng, 6) + '</td></tr>');
+rows.push('<tr' + (res === 'GAP' ? ' class="gap"' : '') + '><td>' + p.uid + '</td><td>' + fD(p.t) + '</td><td><span class="nd" style="--c:' + COLOR[p.node] + '"><i></i>' + idName(pid(p)) + '</span></td><td>' + p.seq + '</td><td><span class="res ' + res + '">' + res + '</span></td><td>' + fx(p.temp, 1) + '</td><td>' + fx(p.humidity, 0) + '</td><td>' + fx(p.batteryMv / 1000, 2) + '</td><td>' + p.rssi + '</td><td>' + fx(p.lat, 6) + '</td><td>' + fx(p.lng, 6) + '</td></tr>');
 }
 $('#log').innerHTML = rows.join('') || '<tr><td colspan="11" class="empty">No packets yet. They appear here as nodes report in.</td></tr>';
 $('#count').textContent = matches > LOG_ROWS ? 'Newest ' + LOG_ROWS + ' of ' + matches : matches + ' packet' + (matches === 1 ? '' : 's');
@@ -612,7 +619,7 @@ $('#count').textContent = matches > LOG_ROWS ? 'Newest ' + LOG_ROWS + ' of ' + m
 function downloadCsv() {
 var lines = ['update,timestamp,node,seq,result,lat,lng,temp_c,humidity_pct,battery_mv,rssi_dbm'];
 hist.forEach(function (p) {
-lines.push([p.uid, fD(p.t), p.node, p.seq, p.result, fin(p.lat) ? p.lat.toFixed(6) : '', fin(p.lng) ? p.lng.toFixed(6) : '',
+lines.push([p.uid, fD(p.t), pid(p), p.seq, p.result, fin(p.lat) ? p.lat.toFixed(6) : '', fin(p.lng) ? p.lng.toFixed(6) : '',
 fin(p.temp) ? p.temp.toFixed(1) : '', fin(p.humidity) ? p.humidity.toFixed(1) : '', p.batteryMv, p.rssi].join(','));
 });
 var blob = new Blob([lines.join('\r\n') + '\r\n'], {type: 'text/csv'});
@@ -658,8 +665,8 @@ $('#sun').onclick = function () { prefs.sun = !prefs.sun; savePrefs(); applyPref
 $('#cards').onclick = function (e) {
 var rn = e.target.closest('[data-rename]');
 if (rn) {
-var id = +rn.getAttribute('data-rename');
-var name = prompt('Rescuer name for Node ' + id + ' (empty to clear):', prefs.names[id] || '');
+var id = rid(+rn.getAttribute('data-rename'));
+var name = prompt('Rescuer name for ' + idName(id) + ' (empty to clear):', prefs.names[id] || '');
 if (name === null) return;
 name = name.trim().slice(0, 20);
 if (name) prefs.names[id] = name; else delete prefs.names[id];

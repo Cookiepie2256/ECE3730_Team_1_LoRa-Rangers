@@ -70,12 +70,12 @@ def test_feed_and_json():
         feed.handle("[CSVDATA] 2,20,602340,37.2046,-113.6403,25.6,30.0,3,3948,-90\n", True)
         feed.handle("[CSVDATA] 2,20,602340,37.2046,-113.6403,25.6,30.0,3,3948,-90\n", True)
         feed.handle("[CSVDATA] 1,1,1000,37.1,-113.5,nan,nan,3,3700,-110\n", True)
-        feed.handle("[CSVDATA] 9,1,1000,37.1,-113.5,20,30,3,3700,-110\n", True)
+        feed.handle("[CSVDATA] 0,1,1000,37.1,-113.5,20,30,3,3700,-110\n", True)
         feed.handle("Booting...\n", True)
         d = feed.data(0)
         text = json.dumps(d, allow_nan=False)  # raises if any NaN slipped through
         back = json.loads(text)
-        check(back["lastId"] == 3, "3 packets accepted (dup and node 9 ignored)")
+        check(back["lastId"] == 3, "3 packets accepted (dup and node 0 ignored)")
         check([p["result"] for p in back["packets"]] == ["NEW", "GAP", "NEW"], "results")
         n2 = back["nodes"][1]
         check(n2["missed"] == 2 and n2["duplicates"] == 1, "node 2 counters")
@@ -90,6 +90,19 @@ def test_feed_and_json():
               "log row keeps the original values")
 
 
+def test_mac_ids():
+    dash = ps.Dashboard(60000, 150000, None)
+    r = ps.parse_csv("48001,1,1000,37.1,-113.5,20,30,3,3700,-110")
+    check(dash.update(r, 0) == "NEW", "MAC-based ID accepted")
+    check(dash.update(dict(r, node=2), 0) == "NEW", "small ID accepted")
+    check(dash.update(dict(r, node=1), 0) == "NEW", "ID 1 takes the last slot")
+    check(dash.update(dict(r, node=48002), 0) == "BAD_NODE", "no 4th node")
+    d = dash.to_json(0, 0)
+    check([n.get("nodeId") for n in d["nodes"]] == [48001, 2, 1], "slots match C++")
+    check([(p["node"], p["nodeId"]) for p in d["packets"]] == [(1, 48001), (2, 2), (3, 1)],
+          "packets carry slot and node ID")
+
+
 def test_demo_json_valid():
     sim = ps.Simulation(ps.PRESENTATION, speed=1.0)
     d = sim.dash.to_json(0, 0)
@@ -98,7 +111,7 @@ def test_demo_json_valid():
 
 
 if __name__ == "__main__":
-    for t in (test_parse, test_feed_and_json, test_demo_json_valid):
+    for t in (test_parse, test_feed_and_json, test_mac_ids, test_demo_json_valid):
         before = failures
         t()
         print(f"{'[PASS]' if failures == before else '[FAIL]'} {t.__name__}")

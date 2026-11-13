@@ -17,7 +17,7 @@
 
 // ---- Configuration (override with #define before including this file) ----
 #ifndef DASH_MAX_NODES
-#define DASH_MAX_NODES 3 // Valid node IDs are 1..DASH_MAX_NODES
+#define DASH_MAX_NODES 3 // Node slots shown on the page (see update())
 #endif
 #ifndef DASH_LATE_MS
 #define DASH_LATE_MS 60000UL // No packet for 60 s -> LATE (2 missed sends)
@@ -51,7 +51,7 @@
 // line: node_id,seq,elapsed_ms,latitude,longitude,temp_c,humidity_pct,hops,
 // battery_mv,rssi_dbm
 struct DashboardReading {
-    uint16_t nodeId;
+    uint16_t nodeId; // Any ID except 0, e.g. from NodeId::get()
     uint16_t seqNum;
     int32_t elapsedMs; // ms since that node booted (not a shared clock)
     double lat;        // degrees
@@ -69,6 +69,7 @@ enum class NodeStatus : uint8_t { NO_DATA, OK, LATE, LOST };
 // Everything the dashboard knows about one node
 struct NodeState {
     bool hasData;
+    uint16_t nodeId;       // Node ID that owns this slot (0 = slot free)
     DashboardReading last; // Last accepted reading
     UpdateResult lastResult;
     uint32_t receivedAtMs; // Base station millis() when `last` arrived
@@ -84,6 +85,7 @@ struct DashboardPacket {
     uint32_t uid; // Global update number: 1, 2, 3...
     uint32_t receivedAtMs;
     UpdateResult result;
+    uint8_t slot; // 1..DASH_MAX_NODES
     DashboardReading reading;
 };
 
@@ -104,11 +106,16 @@ class WebDashboard {
 
     // Main input: one decoded reading, stamped with the base station's
     // millis() on arrival.
+    //
+    // Node IDs can be anything except 0. The first time an ID is seen it gets
+    // a page slot: slot N if the ID is N (1..DASH_MAX_NODES) and that slot is
+    // free, otherwise the first free slot. Returns BAD_NODE for ID 0 or when
+    // every slot is taken by other nodes. Slots last until the base restarts.
     UpdateResult update(const DashboardReading &reading, uint32_t nowMs);
 
     // Parses one SerialForwarder line (the "[CSVDATA] " prefix is optional)
     // and passes it to update(). Returns false if the line is malformed or
-    // the node ID is out of range (then *out is BAD_NODE).
+    // update() rejects the node ID (then *out is BAD_NODE).
     bool updateFromCsv(const char *line, uint32_t nowMs,
                        UpdateResult *out = nullptr);
 
@@ -120,8 +127,11 @@ class WebDashboard {
     // nullptr (the default) shows nothing.
     void setModeLabel(const char *label) { modeLabel_ = label; }
 
-    // nullptr if nodeId is out of range
+    // nullptr if this node ID hasn't been seen
     const NodeState *getNode(uint16_t nodeId) const;
+
+    // Page slot (1..DASH_MAX_NODES) given to a node ID, or 0 if none
+    uint8_t slotOf(uint16_t nodeId) const;
 
     // Total accepted packets so far (also the newest uid)
     uint32_t lastUid() const { return nextUid_ - 1; }
@@ -151,7 +161,9 @@ class WebDashboard {
     bool started_;
     WebServer server_;
 
-    void accept(NodeState &st, const DashboardReading &r, UpdateResult result,
+    uint8_t claimSlot(uint16_t nodeId);
+    NodeStatus statusOf(const NodeState &st, uint32_t nowMs) const;
+    void accept(uint8_t slot, const DashboardReading &r, UpdateResult result,
                 uint32_t nowMs);
     void handleRoot();
     void handleData();

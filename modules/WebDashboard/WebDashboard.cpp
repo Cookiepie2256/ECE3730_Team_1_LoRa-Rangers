@@ -161,15 +161,48 @@ void WebDashboard::handleClient() {
     }
 }
 
+uint8_t WebDashboard::slotOf(uint16_t nodeId) const {
+    if (nodeId == 0) {
+        return 0;
+    }
+    for (uint8_t i = 0; i < DASH_MAX_NODES; i++) {
+        if (nodes_[i].nodeId == nodeId) {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+uint8_t WebDashboard::claimSlot(uint16_t nodeId) {
+    // Small IDs keep their own slot (node 2 -> slot 2) so hand-numbered nodes
+    // and the demo look the same as before
+    if (nodeId <= DASH_MAX_NODES && nodes_[nodeId - 1].nodeId == 0) {
+        nodes_[nodeId - 1].nodeId = nodeId;
+        return nodeId;
+    }
+    for (uint8_t i = 0; i < DASH_MAX_NODES; i++) {
+        if (nodes_[i].nodeId == 0) {
+            nodes_[i].nodeId = nodeId;
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
 UpdateResult WebDashboard::update(const DashboardReading &r, uint32_t nowMs) {
-    if (r.nodeId < 1 || r.nodeId > DASH_MAX_NODES) {
+    if (r.nodeId == 0) {
         return UpdateResult::BAD_NODE;
     }
-    NodeState &st = nodes_[r.nodeId - 1];
-    if (!st.hasData) {
-        accept(st, r, UpdateResult::NEW, nowMs);
+    uint8_t slot = slotOf(r.nodeId);
+    if (slot == 0) {
+        slot = claimSlot(r.nodeId);
+        if (slot == 0) {
+            return UpdateResult::BAD_NODE; // Every slot belongs to another node
+        }
+        accept(slot, r, UpdateResult::NEW, nowMs);
         return UpdateResult::NEW;
     }
+    NodeState &st = nodes_[slot - 1];
 
     // Distances in both directions, so 65535 -> 0 counts as one step forward
     const uint16_t fwd = (uint16_t)(r.seqNum - st.last.seqNum);
@@ -190,31 +223,33 @@ UpdateResult WebDashboard::update(const DashboardReading &r, uint32_t nowMs) {
         // tracking again from this packet instead of counting thousands of
         // "missed" packets.
         st.reboots++;
-        accept(st, r, UpdateResult::NEW, nowMs);
+        accept(slot, r, UpdateResult::NEW, nowMs);
         return UpdateResult::NEW;
     }
     if (fwd > 1) {
         st.missed += fwd - 1;
-        accept(st, r, UpdateResult::GAP, nowMs);
+        accept(slot, r, UpdateResult::GAP, nowMs);
         return UpdateResult::GAP;
     }
-    accept(st, r, UpdateResult::NEW, nowMs);
+    accept(slot, r, UpdateResult::NEW, nowMs);
     return UpdateResult::NEW;
 }
 
-void WebDashboard::accept(NodeState &st, const DashboardReading &r,
+void WebDashboard::accept(uint8_t slot, const DashboardReading &r,
                           UpdateResult result, uint32_t nowMs) {
+    NodeState &st = nodes_[slot - 1];
     st.hasData = true;
     st.last = r;
     st.lastResult = result;
     st.receivedAtMs = nowMs;
     st.received++;
 
-    DashboardPacket &slot = history_[(nextUid_ - 1) % DASH_HISTORY];
-    slot.uid = nextUid_;
-    slot.receivedAtMs = nowMs;
-    slot.result = result;
-    slot.reading = r;
+    DashboardPacket &entry = history_[(nextUid_ - 1) % DASH_HISTORY];
+    entry.uid = nextUid_;
+    entry.receivedAtMs = nowMs;
+    entry.result = result;
+    entry.slot = slot;
+    entry.reading = r;
     nextUid_++;
 }
 
@@ -299,10 +334,14 @@ bool WebDashboard::updateFromCsv(const char *line, uint32_t nowMs,
 
 NodeStatus WebDashboard::getStatus(uint16_t nodeId, uint32_t nowMs) const {
     const NodeState *st = getNode(nodeId);
-    if (st == nullptr || !st->hasData) {
+    return st == nullptr ? NodeStatus::NO_DATA : statusOf(*st, nowMs);
+}
+
+NodeStatus WebDashboard::statusOf(const NodeState &st, uint32_t nowMs) const {
+    if (!st.hasData) {
         return NodeStatus::NO_DATA;
     }
-    const uint32_t age = nowMs - st->receivedAtMs; // Safe across millis() wrap
+    const uint32_t age = nowMs - st.receivedAtMs; // Safe across millis() wrap
     if (age >= lostMs_) {
         return NodeStatus::LOST;
     }
@@ -318,10 +357,8 @@ void WebDashboard::setTimeouts(uint32_t lateMs, uint32_t lostMs) {
 }
 
 const NodeState *WebDashboard::getNode(uint16_t nodeId) const {
-    if (nodeId < 1 || nodeId > DASH_MAX_NODES) {
-        return nullptr;
-    }
-    return &nodes_[nodeId - 1];
+    const uint8_t slot = slotOf(nodeId);
+    return slot == 0 ? nullptr : &nodes_[slot - 1];
 }
 
 size_t WebDashboard::buildJson(char *buf, size_t len, uint32_t nowMs,
@@ -354,7 +391,10 @@ size_t WebDashboard::buildJson(char *buf, size_t len, uint32_t nowMs,
     for (uint16_t id = 1; id <= DASH_MAX_NODES; id++) {
         const NodeState &st = nodes_[id - 1];
         o.add("%s{\"id\":%u,\"status\":\"%s\",", id == 1 ? "" : ",",
-              (unsigned)id, statusName(getStatus(id, nowMs)));
+              (unsigned)id, statusName(statusOf(st, nowMs)));
+        if (st.nodeId != 0) {
+            o.add("\"nodeId\":%u,", (unsigned)st.nodeId);
+        }
         if (st.hasData) {
             o.add("\"ageMs\":%lu,\"seq\":%u,\"elapsedMs\":%ld,",
                   (unsigned long)(nowMs - st.receivedAtMs),
@@ -385,9 +425,9 @@ size_t WebDashboard::buildJson(char *buf, size_t len, uint32_t nowMs,
     for (uint32_t uid = firstUid; uid <= newest && uid != 0; uid++) {
         const DashboardPacket &p = history_[(uid - 1) % DASH_HISTORY];
         const size_t mark = o.pos;
-        o.add("%s{\"uid\":%lu,\"node\":%u,\"seq\":%u,\"result\":\"%s\","
-              "\"receivedAtMs\":%lu,\"elapsedMs\":%ld,",
-              first ? "" : ",", (unsigned long)p.uid,
+        o.add("%s{\"uid\":%lu,\"node\":%u,\"nodeId\":%u,\"seq\":%u,"
+              "\"result\":\"%s\",\"receivedAtMs\":%lu,\"elapsedMs\":%ld,",
+              first ? "" : ",", (unsigned long)p.uid, (unsigned)p.slot,
               (unsigned)p.reading.nodeId, (unsigned)p.reading.seqNum,
               resultName(p.result), (unsigned long)p.receivedAtMs,
               (long)p.reading.elapsedMs);
