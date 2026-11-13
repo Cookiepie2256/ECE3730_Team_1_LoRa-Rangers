@@ -18,6 +18,12 @@ class LoRaTx {
     // Listens for incoming traffic, decrements hop counter, and rebroadcasts
     bool processRelay();
 
+    // Base station: checks for a received frame without blocking. On entry
+    // `len` is the size of `buffer` (use RH_RF95_MAX_MESSAGE_LEN); on success
+    // it is the frame length and `rssiDbm` is its signal strength. Returns
+    // false if nothing arrived or the radio is offline.
+    bool receive(uint8_t *buffer, uint8_t &len, int16_t &rssiDbm);
+
   private:
     float _freqMhz;
     bool _hwReady;

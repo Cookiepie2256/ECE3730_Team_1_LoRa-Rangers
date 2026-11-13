@@ -1,21 +1,39 @@
-"""Run the dashboard on a laptop, with fake data or live from the base station.
+"""Run the dashboard on a laptop from the base station's CSV log.
 
-    python tools/preview_server.py              # opens http://localhost:8000
-    python tools/preview_server.py --present    # class presentation timeline
-    python tools/preview_server.py --speed 10   # 10x faster: LATE/LOST sooner
-    python tools/preview_server.py --serial COM3 [--log packets.csv]   # LIVE
-    python tools/preview_server.py --stdin      # LIVE from typed/pasted lines
+    python tools/preview_server.py                    # REAL: follows packets.csv
+    python tools/preview_server.py --csv run1.csv     # REAL: another CSV file
+    python tools/preview_server.py --serial COM3 [--log packets.csv]   # REAL
+    python tools/preview_server.py --stdin            # REAL: typed/pasted lines
+    python tools/preview_server.py --demo             # FAKE data (opt-in)
+    python tools/preview_server.py --present          # FAKE: class presentation
+    python tools/preview_server.py --demo --speed 10  # FAKE, 10x faster
 
-LIVE mode reads the base station's USB serial output (Braxton's
-SerialForwarder `[CSVDATA] ...` lines) and shows the real readings. Only one
-program can open a serial port: close the Arduino Serial Monitor and
-`just log` first (use --log to keep a CSV in the same format). --serial needs
-pyserial; everything else is standard library only.
+CSV mode (the default) is the team's data path:
 
-Serves web/index.html (re-read on every request, so edit and refresh) and a
-fake /data endpoint with the same scenarios as WebDashboardDemo.h:
+    [nodes] --LoRa--> [base ESP32] --USB--> `just log <port>` --> packets.csv
+                                                                      |
+                                                       this server <--+
 
-Realistic (default, = DASH_DEMO 1), repeats every 10 minutes:
+Braxton's tools/serial_to_csv.py owns the serial port and appends one row per
+packet: pc_time,node_id,seq,elapsed_ms,latitude,longitude,temp_c,
+humidity_pct,hops,battery_mv,rssi_dbm. This server loads that file and keeps
+following it, so the page shows every recorded packet at the time the PC
+logged it, and new packets about half a second after they are written. It
+never writes to the CSV. Start the two programs in either order.
+
+--serial reads the base station's USB serial output directly instead. Only
+one program can open a serial port, so it cannot run next to `just log`
+(use --log to keep a CSV in the same format). --serial needs pyserial;
+everything else is standard library only.
+
+Fake data is never shown unless --demo or --present is given, and the page
+drops its stored history whenever the data source changes, so fake packets
+cannot end up next to real ones.
+
+Serves web/index.html (re-read on every request, so edit and refresh). The
+fake /data endpoint uses the same scenarios as WebDashboardDemo.h:
+
+Realistic (--demo, = DASH_DEMO 1), repeats every 10 minutes:
   - 3 rescuers walking near Snow Canyon, Utah, one packet each ~30 s +/- 4 s
   - about 1 in 12 packets lost on air (shows as GAP)
   - Node 2's packet at minute 2:00 arrives twice (DUPLICATE)
@@ -41,6 +59,7 @@ import sys
 import threading
 import time
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -55,6 +74,8 @@ MAX_GAP = 1000
 CLOCK_SLACK_MS = 1000
 BASE_LAT, BASE_LNG = 37.2000, -113.6400
 NEVER = 0xFFFFFFFF
+PAGE_SIZE = 500      # most packets in one /data response ("more" pages the rest)
+CSV_HISTORY = 5000   # packets kept in CSV mode (same as CAP in web/index.html)
 
 # Same values as DEMO_REALISTIC / DEMO_PRESENTATION in WebDashboardDemo.h
 REALISTIC = dict(send_ms=30_000, jitter_ms=4_000, drop_one_in=12, cycle_ms=600_000,
@@ -70,8 +91,10 @@ PRESENTATION = dict(send_ms=5_000, jitter_ms=800, drop_one_in=0, cycle_ms=150_00
 class Dashboard:
     """Python copy of the WebDashboard update and JSON logic."""
 
-    def __init__(self, late_ms, lost_ms, mode):
+    def __init__(self, late_ms, lost_ms, mode, source=None, history_limit=HISTORY):
         self.late_ms, self.lost_ms, self.mode = late_ms, lost_ms, mode
+        self.source = source  # "csv", "demo" or "serial": tells the page what it shows
+        self.history_limit = history_limit
         self.boot_id = random.randint(1, 0x7FFFFFFF)  # new on every restart
         self.nodes = {n: self._empty() for n in range(1, MAX_NODES + 1)}  # by slot
         self.history = []
@@ -132,7 +155,8 @@ class Dashboard:
         st["received"] += 1
         self.history.append({"uid": self.next_uid, "result": result, "rx": now,
                              "slot": slot, "r": r})
-        self.history = self.history[-HISTORY:]
+        if len(self.history) > self.history_limit:
+            del self.history[0]
         self.next_uid += 1
         return result
 
@@ -150,7 +174,7 @@ class Dashboard:
                 "temp": num(r["temp"], 1), "humidity": num(r["humidity"], 1),
                 "batteryMv": r["batteryMv"], "rssi": r["rssi"], "hopLimit": r["hops"]}
 
-    def to_json(self, now, since):
+    def to_json(self, now, since, uptime=None):
         with self.lock:
             nodes = []
             for n, st in self.nodes.items():
@@ -165,18 +189,24 @@ class Dashboard:
                     item[k] = st[k]
                 nodes.append(item)
             packets = []
+            last_id, more = self.next_uid - 1, False
             for p in self.history:
                 if p["uid"] > since:
+                    if len(packets) == PAGE_SIZE:  # the page asks again from lastId
+                        last_id, more = packets[-1]["uid"], True
+                        break
                     r = p["r"]
                     packets.append({"uid": p["uid"], "node": p["slot"], "nodeId": r["node"],
                                     "seq": r["seq"],
                                     "result": p["result"], "receivedAtMs": p["rx"],
                                     "elapsedMs": r["elapsedMs"], **self._fields(r)})
-            out = {"nowMs": now, "uptimeMs": now, "bootId": self.boot_id,
-                   "lateMs": self.late_ms, "lostMs": self.lost_ms}
+            out = {"nowMs": now, "uptimeMs": now if uptime is None else uptime,
+                   "bootId": self.boot_id, "lateMs": self.late_ms, "lostMs": self.lost_ms}
             if self.mode:
                 out["mode"] = self.mode
-            out.update(nodes=nodes, packets=packets, lastId=self.next_uid - 1, more=False)
+            if self.source:
+                out["source"] = self.source
+            out.update(nodes=nodes, packets=packets, lastId=last_id, more=more)
             return out
 
 
@@ -225,7 +255,7 @@ class Simulation:
     def __init__(self, sc, speed):
         self.sc, self.speed = sc, speed
         self.start = time.monotonic()
-        self.dash = Dashboard(sc["late_ms"], sc["lost_ms"], sc["mode"])
+        self.dash = Dashboard(sc["late_ms"], sc["lost_ms"], sc["mode"], source="demo")
         self.nodes = [FakeNode(n, sc) for n in range(1, MAX_NODES + 1)]
         self.gap_cycle = self.dup_cycle = None
         self.dup = None  # (due_ms, reading)
@@ -308,7 +338,7 @@ class LiveFeed:
 
     def __init__(self, log_path=None):
         self.start = time.monotonic()
-        self.dash = Dashboard(REAL_LATE_MS, REAL_LOST_MS, None)
+        self.dash = Dashboard(REAL_LATE_MS, REAL_LOST_MS, None, source="serial")
         self.log = None
         if log_path:
             # Same columns as tools/serial_to_csv.py, so the files can be merged
@@ -341,6 +371,113 @@ class LiveFeed:
 
     def data(self, since):
         return self.dash.to_json(self.now_ms(), since)
+
+
+class CsvFeed:
+    """Real packets from the CSV that tools/serial_to_csv.py (`just log`) writes.
+
+    Loads every row already in the file, then keeps following it. Each row is
+    stamped with its own pc_time, so history shows when a packet was really
+    logged and LATE/LOST come from its real age. The file is only ever read.
+    """
+
+    HEAD = 64  # leading bytes remembered to notice that the file was replaced
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.started = time.time()
+        self.lock = threading.Lock()
+        self.waiting = False
+        self._reset()
+
+    def _reset(self):
+        self.dash = Dashboard(REAL_LATE_MS, REAL_LOST_MS, f"CSV: {self.path.name}",
+                              source="csv", history_limit=CSV_HISTORY)
+        self.offset = 0      # bytes of the file already consumed
+        self.head = b""      # first bytes of what was consumed
+        self.t0 = None       # pc_time of the first row, in ms: the dashboard's zero
+        self.last_rx = 0
+        self.rows = self.skipped = 0
+
+    @staticmethod
+    def _stamp_ms(text):
+        """pc_time (ISO 8601, as written by serial_to_csv.py) -> epoch ms."""
+        try:
+            return int(datetime.fromisoformat(text.strip()).timestamp() * 1000)
+        except (ValueError, OverflowError, OSError):
+            return None
+
+    def _row(self, line):
+        line = line.strip()
+        if not line or line.startswith("pc_time"):
+            return None  # blank line or the header row
+        stamp, _, rest = line.partition(",")
+        rx = self._stamp_ms(stamp)
+        r = parse_csv(rest) if rx is not None else None
+        if r is None:
+            self.skipped += 1
+            print(f"[skipped: not a valid CSV row] {line}")
+            return None
+        if self.t0 is None:
+            self.t0 = rx
+        # Never step backwards (PC clock changed mid-run): keeps ages >= 0
+        self.last_rx = max(self.last_rx, rx - self.t0)
+        result = self.dash.update(r, self.last_rx)
+        if result == "BAD_NODE":
+            self.skipped += 1
+            print(f"[skipped: node ID 0, or all {MAX_NODES} slots taken by other nodes] {line}")
+            return None
+        self.rows += 1
+        return result
+
+    def poll(self):
+        """Read the complete lines added since the last call. Returns how
+        many rows were read (0 if nothing new)."""
+        with self.lock:
+            try:
+                size = self.path.stat().st_size
+                with self.path.open("rb") as f:
+                    head = f.read(len(self.head))
+                    if size < self.offset or head != self.head:
+                        print(f"[csv] {self.path} was replaced: reloading")
+                        self._reset()
+                    f.seek(self.offset)
+                    chunk = f.read()
+            except OSError:
+                if self.offset:
+                    print(f"[csv] {self.path} is gone: waiting for it")
+                    self._reset()
+                elif not self.waiting:
+                    print(f"[csv] waiting for {self.path} (start `just log <port>`)")
+                self.waiting = True
+                return 0
+            self.waiting = False
+            end = chunk.rfind(b"\n")
+            if end < 0:
+                return 0  # no complete new line yet
+            if len(self.head) < self.HEAD:
+                self.head = (self.head + chunk[:end + 1])[:self.HEAD]
+            self.offset += end + 1
+            before = self.rows
+            for raw in chunk[:end].split(b"\n"):
+                self._row(raw.decode("utf-8", errors="replace"))
+            added = self.rows - before
+            if added:
+                print(f"[csv] +{added} row(s), {self.rows} total"
+                      + (f", {self.skipped} skipped" if self.skipped else ""))
+            return added
+
+    def follow(self, interval=0.5):
+        while True:
+            self.poll()
+            time.sleep(interval)
+
+    def data(self, since):
+        with self.lock:
+            wall = int(time.time() * 1000)
+            now = max(self.last_rx, wall - self.t0) if self.t0 is not None else 0
+            uptime = wall - int(self.started * 1000)
+            return self.dash.to_json(now, since, uptime)
 
 
 def read_serial(port, baud, feed):
@@ -397,25 +534,43 @@ def make_handler(sim):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--present", action="store_true",
-                        help="class presentation timeline (6x faster, scripted)")
-    parser.add_argument("--speed", type=float, default=1.0,
-                        help="run the fake clock faster, e.g. 10")
+    parser.add_argument("--csv", metavar="FILE",
+                        help="REAL: follow the CSV written by `just log` "
+                             "(this is the default, with packets.csv)")
     parser.add_argument("--serial", metavar="PORT",
-                        help="LIVE: read [CSVDATA] lines from the base station, e.g. COM3")
+                        help="REAL: read [CSVDATA] lines from the base station, e.g. COM3")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--stdin", action="store_true",
-                        help="LIVE: read CSV lines typed or piped into this terminal")
+                        help="REAL: read CSV lines typed or piped into this terminal")
     parser.add_argument("--log", metavar="FILE",
-                        help="LIVE: also append each packet to a CSV file")
+                        help="with --serial/--stdin: also append each packet to a CSV file")
+    parser.add_argument("--demo", action="store_true",
+                        help="FAKE data: 3 simulated rescuers (never the default)")
+    parser.add_argument("--present", action="store_true",
+                        help="FAKE data: class presentation timeline (6x faster, scripted)")
+    parser.add_argument("--speed", type=float, default=1.0,
+                        help="with --demo/--present: run the fake clock faster, e.g. 10")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # show packets as they arrive
 
-    if args.serial and args.stdin:
-        parser.error("use --serial or --stdin, not both")
+    demo = args.demo or args.present
+    chosen = [name for name, on in (("--csv", args.csv), ("--serial", args.serial),
+                                    ("--stdin", args.stdin), ("--demo/--present", demo)) if on]
+    if len(chosen) > 1:
+        parser.error(f"choose one data source, not {' and '.join(chosen)}")
+    if args.speed != 1.0 and not demo:
+        parser.error("--speed only applies to --demo/--present")
+    if args.log and not (args.serial or args.stdin):
+        parser.error("--log only applies to --serial/--stdin (CSV mode never writes)")
     url = f"http://localhost:{args.port}"
-    if args.serial or args.stdin:
+    if not chosen or args.csv:
+        sim = CsvFeed(args.csv or "packets.csv")
+        print(f"Dashboard at {url}  (REAL data from {sim.path.resolve()}, "
+              "LATE 60 s, LOST 150 s, Ctrl+C to stop)")
+        sim.poll()  # load what is already there before the first request
+        threading.Thread(target=sim.follow, daemon=True).start()
+    elif args.serial or args.stdin:
         if args.serial:
             try:
                 import serial  # noqa: F401
@@ -428,7 +583,8 @@ def main():
     else:
         sc = PRESENTATION if args.present else REALISTIC
         sim = Simulation(sc, args.speed)
-        print(f"Dashboard preview at {url}  ({sc['mode']}, speed x{args.speed:g}, Ctrl+C to stop)")
+        print(f"Dashboard preview at {url}  (FAKE data: {sc['mode']}, speed x{args.speed:g}, "
+              "Ctrl+C to stop)")
         if args.present:
             print("Timeline: 0:35 GAP | 0:55 duplicate | ~1:20 Node 3 LATE | ~1:35 LOST | "
                   "1:55 back | repeats every 2:30")

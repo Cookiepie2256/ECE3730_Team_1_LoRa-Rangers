@@ -29,6 +29,19 @@ bool LoRaTx::transmitFrame(const uint8_t *frameBuffer, uint8_t len) {
     return true;
 }
 
+bool LoRaTx::receive(uint8_t *buffer, uint8_t &len, int16_t &rssiDbm) {
+    if (buffer == nullptr || !_hwReady || !_rf95.available())
+        return false;
+
+    uint8_t rxLen = len;
+    if (!_rf95.recv(buffer, &rxLen))
+        return false;
+
+    len = rxLen;
+    rssiDbm = _rf95.lastRssi();
+    return true;
+}
+
 bool LoRaTx::processRelay() {
     if (!_hwReady || !_rf95.available())
         return false;

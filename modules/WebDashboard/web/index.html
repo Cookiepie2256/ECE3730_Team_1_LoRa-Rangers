@@ -266,7 +266,7 @@ var METRICS = [
   {k: 'rssi', t: 'Signal (RSSI)', u: 'dBm', d: 0, span: 10}
 ];
 
-var hist = [], lastId = 0, lastUptime = 0, bootId = 0;
+var hist = [], lastId = 0, lastUptime = 0, bootId = 0, source = '';
 var nodes = {}, lateMs = 60000, lostMs = 150000;
 var fetchedAt = 0, fails = 0, everConnected = false;
 var dirty = true, chartsAt = 0, rangeMin = 30, filterNode = 0, hidden = {};
@@ -304,7 +304,7 @@ function nice(x, floor) {
 function load() {
   try {
     var s = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; bootId = s.boot || 0; }
+    if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; bootId = s.boot || 0; source = s.src || ''; }
   } catch (e) { hist = []; }
   try {
     var p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
@@ -317,7 +317,7 @@ function savePrefs() {
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function () {
-    try { localStorage.setItem(KEY, JSON.stringify({h: hist, lastId: lastId, up: lastUptime, boot: bootId})); } catch (e) { /* storage full or blocked */ }
+    try { localStorage.setItem(KEY, JSON.stringify({h: hist, lastId: lastId, up: lastUptime, boot: bootId, src: source})); } catch (e) { /* storage full or blocked */ }
   }, 1500);
 }
 
@@ -341,8 +341,15 @@ function ingest(d) {
   // Base station restarted: its update numbers start over from 1, so ask
   // again from the beginning. bootId changes on every power-up.
   var restarted = d.bootId ? (bootId !== 0 && d.bootId !== bootId) : d.uptimeMs < lastUptime;
-  if (restarted || d.lastId < lastId) {
-    lastId = 0; lastUptime = d.uptimeMs; bootId = d.bootId || 0;
+  // The laptop server says where its packets come from: "csv" (the recorded
+  // log), "serial" or "demo" (fake). Stored history from a different source is
+  // dropped, so fake packets never sit next to real ones. A CSV or demo server
+  // sends everything again after a restart, so its old copy is dropped too.
+  var src = d.source || '', changed = src !== source;
+  if (changed || restarted || d.lastId < lastId) {
+    if (changed || src === 'csv' || src === 'demo') { hist = []; dirty = true; }
+    source = src; lastId = 0; lastUptime = d.uptimeMs; bootId = d.bootId || 0;
+    save();
     return true;
   }
   bootId = d.bootId || 0;

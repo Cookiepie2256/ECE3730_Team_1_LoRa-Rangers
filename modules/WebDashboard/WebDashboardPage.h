@@ -256,7 +256,7 @@ var METRICS = [
 {k: 'humidity', t: 'Humidity', u: '%', d: 0, span: 6},
 {k: 'rssi', t: 'Signal (RSSI)', u: 'dBm', d: 0, span: 10}
 ];
-var hist = [], lastId = 0, lastUptime = 0, bootId = 0;
+var hist = [], lastId = 0, lastUptime = 0, bootId = 0, source = '';
 var nodes = {}, lateMs = 60000, lostMs = 150000;
 var fetchedAt = 0, fails = 0, everConnected = false;
 var dirty = true, chartsAt = 0, rangeMin = 30, filterNode = 0, hidden = {};
@@ -288,7 +288,7 @@ return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
 function load() {
 try {
 var s = JSON.parse(localStorage.getItem(KEY) || 'null');
-if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; bootId = s.boot || 0; }
+if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; bootId = s.boot || 0; source = s.src || ''; }
 } catch (e) { hist = []; }
 try {
 var p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
@@ -301,7 +301,7 @@ try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* s
 function save() {
 clearTimeout(saveTimer);
 saveTimer = setTimeout(function () {
-try { localStorage.setItem(KEY, JSON.stringify({h: hist, lastId: lastId, up: lastUptime, boot: bootId})); } catch (e) { /* storage full or blocked */ }
+try { localStorage.setItem(KEY, JSON.stringify({h: hist, lastId: lastId, up: lastUptime, boot: bootId, src: source})); } catch (e) { /* storage full or blocked */ }
 }, 1500);
 }
 function poll() {
@@ -319,8 +319,11 @@ if (ingest(d) || d.more) again = 30;
 }
 function ingest(d) {
 var restarted = d.bootId ? (bootId !== 0 && d.bootId !== bootId) : d.uptimeMs < lastUptime;
-if (restarted || d.lastId < lastId) {
-lastId = 0; lastUptime = d.uptimeMs; bootId = d.bootId || 0;
+var src = d.source || '', changed = src !== source;
+if (changed || restarted || d.lastId < lastId) {
+if (changed || src === 'csv' || src === 'demo') { hist = []; dirty = true; }
+source = src; lastId = 0; lastUptime = d.uptimeMs; bootId = d.bootId || 0;
+save();
 return true;
 }
 bootId = d.bootId || 0;
