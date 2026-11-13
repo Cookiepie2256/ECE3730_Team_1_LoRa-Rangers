@@ -29,7 +29,7 @@ install-core:
 # Install the Arduino libraries used by the modules
 install-libs:
     arduino-cli lib update-index
-    arduino-cli lib install "DHT sensor library" "Adafruit Unified Sensor" "TinyGPSPlus" "RadioHead"
+    arduino-cli lib install "DHT sensor library" "Adafruit Unified Sensor" "TinyGPSPlus" "RadioHead" "Adafruit SSD1306"
 
 # Link each modules/ folder into the Arduino libraries folder, so sketches can
 # `#include <PacketCodec.h>` etc. Links point at this repo, so edits apply instantly.
@@ -54,9 +54,10 @@ link-libs:
 compile sketch:
     arduino-cli compile --fqbn {{ fqbn }} modules/{{ sketch }}
 
-# Compile one full node program in nodes/ (e.g. just node BaseNode)
+# Compile one full node program in nodes/ (e.g. just node BaseNode).
+# The board comes from that folder's sketch.yaml.
 node sketch:
-    arduino-cli compile --fqbn {{ fqbn }} nodes/{{ sketch }}
+    arduino-cli compile nodes/{{ sketch }}
 
 # Record packets from the base station into a CSV on this PC (needs uv), e.g.
 # just log /dev/ttyUSB0       just log COM3 run1.csv
