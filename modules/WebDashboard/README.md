@@ -26,8 +26,9 @@ Node status: **OK**, **LATE** after 60 s without a packet, **LOST** after 150 s
 | `WebDashboard.h` / `.cpp` | The library: stores readings, tracks sequence numbers, serves `/` and `/data` |
 | `WebDashboardPage.h` | The web page as a flash string. **Generated** from `web/index.html` |
 | `WebDashboardCodec.h` | One-function bridge from Braxton's `DecodedPacket` to a `DashboardReading` |
-| `WebDashboardDemo.h` | Fake traffic from 3 walking rescuers (used when `DASH_DEMO 1`) |
-| `WebDashboard.ino` | Example sketch, demo mode on by default |
+| `WebDashboardDemo.h` | Fake traffic from 3 walking rescuers: realistic or presentation timing |
+| `WebDashboard.ino` | Example sketch, presentation demo on by default (`DASH_DEMO 2`) |
+| `DEMO.md` | Class presentation script: setup, schedule, talking points, Q&A |
 | `web/index.html` | Editable page source (HTML + CSS + JS in one file) |
 | `tools/embed_page.py` | Rebuilds `WebDashboardPage.h` from `web/index.html` |
 | `tools/preview_server.py` | Runs the page on a laptop with fake data, no board needed |
@@ -37,13 +38,18 @@ Node status: **OK**, **LATE** after 60 s without a packet, **LOST** after 150 s
 
 ```
 python tools/preview_server.py              # opens http://localhost:8000
+python tools/preview_server.py --present    # class presentation schedule
 python tools/preview_server.py --speed 10   # 10x faster, to see LATE/LOST sooner
 ```
 
 The preview re-reads `web/index.html` on every refresh, so edit the page and reload.
-The fake data uses the same scenario as the board's demo mode. Node 3 drops out
-from minute 4 to minute 7 of every 10 minutes. At `--speed` above 1 the times on
-the charts look squeezed together; that only happens in the preview.
+The fake data uses the same scenarios as the board:
+
+- **Realistic** (default, `DASH_DEMO 1`): packets every ~30 s, about 1 in 12 lost, one duplicate at minute 2, and Node 3 out of range from minute 4 to 7 of every 10 minutes.
+- **Presentation** (`--present`, `DASH_DEMO 2`): 6x faster and fully scripted. GAP at 0:35, duplicate at 0:55, Node 3 LOST around 1:35 and back at 1:55, repeating every 2:30. See [DEMO.md](DEMO.md).
+
+At `--speed` above 1 the times on the charts look squeezed together; that only
+happens in the preview.
 
 After editing the page, rebuild the header before flashing:
 
@@ -54,6 +60,8 @@ python tools/embed_page.py
 ## Flash and connect
 
 1. Open `WebDashboard.ino` in the Arduino IDE (or `just compile WebDashboard`).
+   Choose `DASH_DEMO` at the top: `2` presentation demo (default), `1` realistic
+   demo, `0` real packets.
 2. Board: the team's default `esp32:esp32:esp32` works, and so does `esp32:esp32:heltec_wifi_lora_32_V3`. Flash it.
 3. On a laptop or phone, join WiFi **LoRaRangers-Base**, password **rangers123**.
 4. Open **http://192.168.4.1**.
@@ -138,7 +146,7 @@ Defined in `WebDashboard.h`. Override any of them with a `#define` before the in
 `GET /data?since=<id>` returns the node states plus every stored packet newer than `id`:
 
 ```json
-{"nowMs":123456,"uptimeMs":123456,"lateMs":60000,"lostMs":150000,
+{"nowMs":123456,"uptimeMs":123456,"bootId":918273645,"lateMs":60000,"lostMs":150000,
  "nodes":[{"id":1,"status":"OK","ageMs":4200,"seq":17,"elapsedMs":512340,
    "lat":37.204512,"lng":-113.640231,"temp":25.4,"humidity":31.0,
    "batteryMv":3950,"rssi":-92,"hopLimit":3,
@@ -150,7 +158,9 @@ Defined in `WebDashboard.h`. Override any of them with a `#define` before the in
 ```
 
 If everything doesn't fit in the buffer, `more` is `true` and the page asks
-again from `lastId`. The browser keeps up to 5000 packets in `localStorage`, so
+again from `lastId`. `bootId` is random on every power-up. When it changes, the
+page knows the base station restarted and asks again from 0. `"mode"` appears
+only when the sketch sets a label with `setModeLabel()`, as the demo modes do. The browser keeps up to 5000 packets in `localStorage`, so
 a refresh doesn't wipe the history. **Clear history** empties it.
 
 ## Tests
@@ -168,4 +178,5 @@ The tests need `g++` and Python 3. They cover:
 - OK → LATE → LOST timing, including `millis()` wrap
 - JSON validity (`python -m json.tool`), the `since` filter, the ring buffer
 - tiny buffers (no overflow) and paging
+- the mode label, the boot ID and the `since` edge cases
 - `logLine`, and the `/`, `/data` and 404 routes

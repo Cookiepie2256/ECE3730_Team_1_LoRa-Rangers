@@ -4,15 +4,19 @@
 // 2. On a laptop or phone, join WiFi "LoRaRangers-Base" (password rangers123).
 // 3. Open http://192.168.4.1
 //
-// DASH_DEMO 1: fake packets from 3 walking rescuers (no LoRa needed).
+// DASH_DEMO 2: class presentation. 3 fake rescuers, 6x faster, scripted
+//              (GAP 0:35, duplicate 0:55, Node 3 LOST ~1:35, back 1:55,
+//              repeats every 2:30). See DEMO.md for the talk track.
+// DASH_DEMO 1: the same fake rescuers at real field timing (30 s packets,
+//              LATE 60 s, LOST 150 s).
 // DASH_DEMO 0: real packets; see "PLUG THE DECODER IN HERE" below.
 //
-// Either way you can type or paste a SerialForwarder line into the Serial
+// In every mode you can type or paste a SerialForwarder line into the Serial
 // Monitor (115200 baud, "Newline"), e.g.
 //   [CSVDATA] 2,17,512340,37.204512,-113.640231,25.4,31.0,3,3950,-92
 // and the sketch prints how the dashboard classified it.
 
-#define DASH_DEMO 1
+#define DASH_DEMO 2
 
 #include "WebDashboard.h"
 #if DASH_DEMO
@@ -20,8 +24,10 @@
 #endif
 
 WebDashboard dashboard;
-#if DASH_DEMO
-DashboardDemo demo;
+#if DASH_DEMO == 2
+DashboardDemo demo(DEMO_PRESENTATION);
+#elif DASH_DEMO
+DashboardDemo demo(DEMO_REALISTIC);
 #endif
 
 char serialLine[DASH_CSV_MAX_LEN + 1];
@@ -104,6 +110,12 @@ void setup() {
     Serial.println(" ECE-3730: WebDashboard (LoRa Rangers base station)");
     Serial.println("==================================================");
 
+#if DASH_DEMO == 2
+    dashboard.setTimeouts(DEMO_PRESENT_LATE_MS, DEMO_PRESENT_LOST_MS);
+    dashboard.setModeLabel("Presentation demo");
+#elif DASH_DEMO
+    dashboard.setModeLabel("Demo data");
+#endif
     if (dashboard.begin()) {
         Serial.printf("[DASH] WiFi \"%s\" (password %s) -> http://%s\n",
                       DASH_AP_SSID, DASH_AP_PASS,
@@ -111,7 +123,10 @@ void setup() {
     } else {
         Serial.println("[DASH] ERROR: could not start the WiFi access point");
     }
-#if DASH_DEMO
+#if DASH_DEMO == 2
+    Serial.println("[DASH] Presentation demo: GAP 0:35, duplicate 0:55, "
+                   "Node 3 LOST ~1:35, back 1:55, repeats every 2:30");
+#elif DASH_DEMO
     Serial.println("[DASH] Demo mode: 3 fake nodes, first packets in ~2 s");
 #endif
     Serial.println(WebDashboard::LOG_HEADER);

@@ -1,16 +1,47 @@
 #ifndef WEB_DASHBOARD_DEMO_H
 #define WEB_DASHBOARD_DEMO_H
 
-// Fake LoRa traffic for testing the dashboard with no sensor nodes.
-// Same scenario as tools/preview_server.py:
+// Fake LoRa traffic for testing and presenting the dashboard with no sensor
+// nodes. tools/preview_server.py runs the same two scenarios on a laptop.
+//
+// Realistic (DASH_DEMO 1), real field timing, repeats every 10 minutes:
 //   - 3 rescuers walking near Snow Canyon, Utah, one packet each ~30 s +/- 4 s
 //   - about 1 in 12 packets lost on air (the next one shows as GAP)
-//   - Node 2 sends one duplicate every 10 minutes (seq % 20 == 4)
-//   - Node 3 is silent from minute 4:00 to 7:00 of every 10 minutes, so it
-//     turns LATE (60 s), then LOST (150 s), then recovers with a GAP
+//   - Node 2's packet at minute 2:00 arrives twice (DUPLICATE)
+//   - Node 3 out of range from 4:00 to 7:00: LATE (60 s), LOST (150 s), back
+//     with a GAP
+//
+// Presentation (DASH_DEMO 2), everything 6x faster and fully scripted,
+// repeats every 2:30 (times from power-on):
+//   0:35  Node 1 loses one packet  -> GAP in the log
+//   0:55  Node 2 heard twice       -> duplicate counter
+//   1:10  Node 3 goes out of range -> LATE ~1:20, LOST + red alert ~1:35
+//   1:55  Node 3 back              -> GAP of ~9 missed packets
+//   Use with dashboard.setTimeouts(DEMO_PRESENT_LATE_MS, DEMO_PRESENT_LOST_MS)
 
 #include "WebDashboard.h"
 #include <math.h>
+
+#define DEMO_PRESENT_LATE_MS 10000UL
+#define DEMO_PRESENT_LOST_MS 25000UL
+
+struct DemoScenario {
+    uint32_t sendMs;       // time between packets from one node
+    long jitterMs;         // +/- random spread (CSMA/CA backoff)
+    long dropOneIn;        // random loss, 1 in N packets (0 = none)
+    uint32_t cycleMs;      // the scenario repeats with this period
+    uint32_t silentFromMs; // Node 3 out of range from this cycle time...
+    uint32_t silentToMs;   // ...until this one
+    uint32_t gapAtMs;      // Node 1's first packet after this is lost
+    uint32_t dupAtMs;      // Node 2's first packet after this arrives twice
+    float stepMinM;        // walking distance per packet, meters
+    float stepMaxM;
+};
+
+static const DemoScenario DEMO_REALISTIC = {
+    30000, 4000, 12, 600000, 240000, 420000, 0xFFFFFFFFUL, 120000, 15, 40};
+static const DemoScenario DEMO_PRESENTATION = {
+    5000, 800, 0, 150000, 70000, 115000, 35000, 55000, 6, 14};
 
 class DashboardDemo {
   public:
@@ -18,7 +49,9 @@ class DashboardDemo {
     typedef void (*PacketCallback)(const DashboardReading &r,
                                    UpdateResult result);
 
-    DashboardDemo() : dupDueMs_(0), dupPending_(false) {
+    explicit DashboardDemo(const DemoScenario &scenario = DEMO_REALISTIC)
+        : sc_(scenario), dupDueMs_(0), dupPending_(false),
+          gapCycle_(0xFFFFFFFFUL), dupCycle_(0xFFFFFFFFUL) {
         const double start[3][3] = {{37.2012, -113.6431, 45},
                                     {37.1987, -113.6385, 0},
                                     {37.2030, -113.6370, 270}};
@@ -33,7 +66,7 @@ class DashboardDemo {
             n.heading = start[i][2];
             n.seq = 0;
             n.bootOffsetMs = (i + 1) * 45000UL; // node booted before the base
-            n.nextMs = 2000UL + 3000UL * i;
+            n.nextMs = 2000UL + (sc_.sendMs / 10) * i;
             n.batteryMv = batt[i];
             n.tempBase = temp[i];
             n.humBase = hum[i];
@@ -46,18 +79,26 @@ class DashboardDemo {
             Node &n = nodes_[i];
             while ((int32_t)(nowMs - n.nextMs) >= 0) {
                 const uint32_t sentAt = n.nextMs;
-                n.nextMs += kSendMs + random(-kJitterMs, kJitterMs + 1);
+                const uint32_t cycle = sentAt / sc_.cycleMs;
+                const uint32_t inCycle = sentAt % sc_.cycleMs;
+                n.nextMs += sc_.sendMs + random(-sc_.jitterMs, sc_.jitterMs + 1);
                 walk(n);
                 n.seq++;
-                if (n.id == 3 && silent(sentAt)) {
+                if (n.id == 3 && inCycle >= sc_.silentFromMs &&
+                    inCycle < sc_.silentToMs) {
                     continue; // out of range: sent but never heard
                 }
-                if (random(kDropOneIn) == 0) {
-                    continue; // lost on air
+                if (n.id == 1 && inCycle >= sc_.gapAtMs && gapCycle_ != cycle) {
+                    gapCycle_ = cycle;
+                    continue; // scripted loss: next packet shows a GAP
+                }
+                if (sc_.dropOneIn > 0 && random(sc_.dropOneIn) == 0) {
+                    continue; // random loss on air
                 }
                 DashboardReading r = reading(n, sentAt);
                 deliver(dash, r, nowMs, cb);
-                if (n.id == 2 && n.seq % 20 == 4) {
+                if (n.id == 2 && inCycle >= sc_.dupAtMs && dupCycle_ != cycle) {
+                    dupCycle_ = cycle;
                     dup_ = r; // same packet arrives again via a relay
                     dupDueMs_ = nowMs + 1500;
                     dupPending_ = true;
@@ -72,12 +113,6 @@ class DashboardDemo {
 
   private:
     static const uint16_t kNodes = 3;
-    static const long kSendMs = 30000;
-    static const long kJitterMs = 4000;
-    static const long kDropOneIn = 12;
-    static const uint32_t kCycleMs = 600000;
-    static const uint32_t kSilentFromMs = 240000;
-    static const uint32_t kSilentToMs = 420000;
 
     struct Node {
         uint16_t id;
@@ -89,33 +124,33 @@ class DashboardDemo {
         float tempBase, humBase;
     };
 
+    DemoScenario sc_;
     Node nodes_[kNodes];
     DashboardReading dup_;
     uint32_t dupDueMs_;
     bool dupPending_;
-
-    static bool silent(uint32_t t) {
-        const uint32_t inCycle = t % kCycleMs;
-        return inCycle >= kSilentFromMs && inCycle < kSilentToMs;
-    }
+    uint32_t gapCycle_;
+    uint32_t dupCycle_;
 
     static double rnd(double lo, double hi) {
         return lo + (hi - lo) * (random(10001) / 10000.0);
     }
 
-    static void walk(Node &n) {
+    void walk(Node &n) const {
         n.heading = fmod(n.heading + rnd(-35, 35) + 360.0, 360.0);
-        const double dist = rnd(15, 40); // meters per 30 s
+        const double dist = rnd(sc_.stepMinM, sc_.stepMaxM);
         const double rad = n.heading * M_PI / 180.0;
         n.lat += dist * cos(rad) / 110540.0;
         n.lng += dist * sin(rad) / (111320.0 * cos(n.lat * M_PI / 180.0));
     }
 
-    static DashboardReading reading(Node &n, uint32_t t) {
+    DashboardReading reading(Node &n, uint32_t t) const {
         const double baseLat = 37.2000, baseLng = -113.6400;
-        const double dx = (n.lng - baseLng) * 111320.0 * cos(baseLat * M_PI / 180.0);
+        const double dx =
+            (n.lng - baseLng) * 111320.0 * cos(baseLat * M_PI / 180.0);
         const double dy = (n.lat - baseLat) * 110540.0;
-        const double minutes = t / 60000.0;
+        // Sensor drift follows "field time", so it looks the same at 6x
+        const double minutes = t / 60000.0 * (30000.0 / sc_.sendMs);
         n.batteryMv -= random(0, 3);
         if (n.batteryMv < 3300) {
             n.batteryMv = 3300;

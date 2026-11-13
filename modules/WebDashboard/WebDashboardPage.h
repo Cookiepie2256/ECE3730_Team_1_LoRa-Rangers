@@ -45,6 +45,9 @@ background:rgba(8,12,17,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:
 .conn.bad{border-color:rgba(239,68,68,.5);color:#fecaca}
 .conn.bad .dot{background:var(--lost)}
 .conn.wait .dot{animation:blink 1s infinite}
+.mode{padding:5px 11px;border-radius:999px;border:1px dashed rgba(245,158,11,.6);color:#fcd34d;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;line-height:1.25}
+.mode small{display:block;font-size:10.5px;font-weight:600;color:#d6b25e;letter-spacing:.04em;text-transform:none}
+.mode[hidden]{display:none}
 .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:10px;border:1px solid var(--line2);background:var(--panel2);cursor:pointer;font-weight:600;font-size:14px;transition:background .15s,border-color .15s}
 .btn:hover{background:#1b2633;border-color:#3a4a5e}
 .btn.primary{background:#0e7490;border-color:#22d3ee55}
@@ -170,6 +173,7 @@ footer{padding:0 16px 24px}
 <div><h1>LoRa Rangers <span>·</span> SAR Base Station</h1><div class="sub">Search &amp; rescue telemetry · 915 MHz LoRa · 3 field nodes</div></div>
 </div>
 <div class="stats">
+<div class="mode" id="mode" hidden></div>
 <div class="stat conn wait" id="conn"><span class="dot"></span><span id="connText">Connecting…</span></div>
 <div class="stat"><label>Local time</label><b id="clock">--:--:--</b></div>
 <div class="stat"><label>Base uptime</label><b id="uptime">--</b></div>
@@ -219,7 +223,7 @@ var METRICS = [
 {k: 'humidity', t: 'Humidity', u: '%', d: 0, span: 6},
 {k: 'rssi', t: 'Signal (RSSI)', u: 'dBm', d: 0, span: 10}
 ];
-var hist = [], lastId = 0, lastUptime = 0;
+var hist = [], lastId = 0, lastUptime = 0, bootId = 0;
 var nodes = {}, lateMs = 60000, lostMs = 150000;
 var fetchedAt = 0, fails = 0, everConnected = false;
 var dirty = true, chartsAt = 0, rangeMin = 30, filterNode = 0, hidden = {};
@@ -245,13 +249,13 @@ return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
 function load() {
 try {
 var s = JSON.parse(localStorage.getItem(KEY) || 'null');
-if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; }
+if (s && Array.isArray(s.h)) { hist = s.h; lastId = s.lastId || 0; lastUptime = s.up || 0; bootId = s.boot || 0; }
 } catch (e) { hist = []; }
 }
 function save() {
 clearTimeout(saveTimer);
 saveTimer = setTimeout(function () {
-try { localStorage.setItem(KEY, JSON.stringify({h: hist, lastId: lastId, up: lastUptime})); } catch (e) { /* storage full or blocked */ }
+try { localStorage.setItem(KEY, JSON.stringify({h: hist, lastId: lastId, up: lastUptime, boot: bootId})); } catch (e) { /* storage full or blocked */ }
 }, 1500);
 }
 function poll() {
@@ -268,10 +272,12 @@ if (ingest(d) || d.more) again = 30;
 .then(function () { clearTimeout(timer); tick(); setTimeout(poll, again); });
 }
 function ingest(d) {
-if (d.uptimeMs < lastUptime || d.lastId < lastId) {
-lastId = 0; lastUptime = d.uptimeMs;
+var restarted = d.bootId ? (bootId !== 0 && d.bootId !== bootId) : d.uptimeMs < lastUptime;
+if (restarted || d.lastId < lastId) {
+lastId = 0; lastUptime = d.uptimeMs; bootId = d.bootId || 0;
 return true;
 }
+bootId = d.bootId || 0;
 var now = Date.now(), added = 0;
 (d.packets || []).forEach(function (p) {
 if (p.uid <= lastId) return;
@@ -282,6 +288,10 @@ added++;
 if (hist.length > CAP) hist.splice(0, hist.length - CAP);
 lastId = d.lastId; lastUptime = d.uptimeMs;
 if (d.lateMs) { lateMs = d.lateMs; lostMs = d.lostMs; }
+var mode = $('#mode');
+mode.hidden = !d.mode;
+if (d.mode) mode.textContent = d.mode;
+if (d.mode) mode.insertAdjacentHTML('beforeend', '<small>LATE ' + lateMs / 1000 + ' s · LOST ' + lostMs / 1000 + ' s</small>');
 nodes = {};
 (d.nodes || []).forEach(function (n) { nodes[n.id] = n; });
 fetchedAt = now;

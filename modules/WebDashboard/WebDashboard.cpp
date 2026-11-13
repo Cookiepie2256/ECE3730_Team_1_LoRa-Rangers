@@ -131,9 +131,13 @@ bool parseReal(const char *s, double minV, double maxV, bool allowNan,
 
 WebDashboard::WebDashboard(uint16_t port)
     : nodes_(), history_(), nextUid_(1), lateMs_(DASH_LATE_MS),
-      lostMs_(DASH_LOST_MS), started_(false), server_(port) {}
+      lostMs_(DASH_LOST_MS), modeLabel_(nullptr), bootId_(0), started_(false),
+      server_(port) {}
 
 bool WebDashboard::begin(const char *ssid, const char *pass) {
+    if (bootId_ == 0) {
+        bootId_ = (uint32_t)random(1, 0x7FFFFFFF);
+    }
     WiFi.mode(WIFI_AP);
     IPAddress ip(192, 168, 4, 1);
     IPAddress mask(255, 255, 255, 0);
@@ -330,10 +334,22 @@ size_t WebDashboard::buildJson(char *buf, size_t len, uint32_t nowMs,
     }
 
     JsonOut o{buf, len - kJsonTailReserve, 0, true};
-    o.add("{\"nowMs\":%lu,\"uptimeMs\":%lu,\"lateMs\":%lu,\"lostMs\":%lu,"
-          "\"nodes\":[",
-          (unsigned long)nowMs, (unsigned long)nowMs, (unsigned long)lateMs_,
-          (unsigned long)lostMs_);
+    o.add("{\"nowMs\":%lu,\"uptimeMs\":%lu,\"bootId\":%lu,\"lateMs\":%lu,"
+          "\"lostMs\":%lu,",
+          (unsigned long)nowMs, (unsigned long)nowMs, (unsigned long)bootId_,
+          (unsigned long)lateMs_, (unsigned long)lostMs_);
+    if (modeLabel_ != nullptr) {
+        // Quotes, backslashes and control characters are skipped so the
+        // JSON stays valid whatever the caller passes
+        o.add("\"mode\":\"");
+        for (const char *c = modeLabel_; *c != '\0'; c++) {
+            if (*c != '"' && *c != '\\' && (unsigned char)*c >= 0x20) {
+                o.add("%c", *c);
+            }
+        }
+        o.add("\",");
+    }
+    o.add("\"nodes\":[");
 
     for (uint16_t id = 1; id <= DASH_MAX_NODES; id++) {
         const NodeState &st = nodes_[id - 1];
@@ -364,8 +380,9 @@ size_t WebDashboard::buildJson(char *buf, size_t len, uint32_t nowMs,
     uint32_t lastIncluded = sinceId;
     bool more = false;
     bool first = true;
-    for (uint32_t uid = (sinceId + 1 > oldest ? sinceId + 1 : oldest);
-         uid <= newest && uid != 0; uid++) {
+    const uint32_t firstUid =
+        sinceId >= newest ? newest + 1 : (sinceId + 1 > oldest ? sinceId + 1 : oldest);
+    for (uint32_t uid = firstUid; uid <= newest && uid != 0; uid++) {
         const DashboardPacket &p = history_[(uid - 1) % DASH_HISTORY];
         const size_t mark = o.pos;
         o.add("%s{\"uid\":%lu,\"node\":%u,\"seq\":%u,\"result\":\"%s\","
@@ -386,6 +403,11 @@ size_t WebDashboard::buildJson(char *buf, size_t len, uint32_t nowMs,
         }
         first = false;
         lastIncluded = uid;
+    }
+
+    if (more && first) {
+        buf[0] = '\0';
+        return 0; // Not even one packet fits: paging could never progress
     }
 
     o.cap = len; // Use the reserved room for the closing part

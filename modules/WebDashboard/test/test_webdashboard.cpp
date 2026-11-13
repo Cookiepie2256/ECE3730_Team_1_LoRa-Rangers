@@ -371,6 +371,33 @@ static void testJsonTinyBuffers() {
     CHECK(since == 30);
 }
 
+static void testModeBootAndEdges() {
+    WebDashboard d;
+    CHECK(json(d, 0, 0).find("\"mode\"") == std::string::npos); // off by default
+    d.setModeLabel("Presentation \"demo\"\\\n");
+    std::string j = json(d, 0, 0);
+    CHECK(j.find("\"mode\":\"Presentation demo\"") != std::string::npos);
+    saveJson("json_mode", j.c_str());
+
+    // bootId is random per power-up and set by begin()
+    CHECK(j.find("\"bootId\":0,") != std::string::npos);
+    CHECK(d.begin());
+    CHECK(json(d, 0, 0).find("\"bootId\":0,") == std::string::npos);
+
+    // since past the newest (even the largest value) returns no packets
+    d.update(reading(1, 1, 1000), 0);
+    std::string far = json(d, 0, 4294967295UL);
+    CHECK(count(far, "\"uid\":") == 0);
+
+    // A buffer too small for even one packet is an error, not endless paging
+    std::vector<char> buf(1000);
+    WebDashboard full;
+    for (uint16_t id = 1; id <= 3; id++) {
+        full.update(reading(id, 1, 1000), 0);
+    }
+    CHECK(full.buildJson(buf.data(), 900, 0, 0) == 0);
+}
+
 static void testLogLine() {
     WebDashboard d;
     char buf[200];
@@ -439,6 +466,7 @@ int main(int argc, char **argv) {
         {"since filter", testJsonSince},
         {"ring buffer", testRingBuffer},
         {"tiny buffers + paging", testJsonTinyBuffers},
+        {"mode label, boot id, edge cases", testModeBootAndEdges},
         {"logLine", testLogLine},
         {"web routes", testRoutes},
     };

@@ -26,7 +26,8 @@ All files are in `modules/WebDashboard/`. See its `README.md` for details.
 - `WebDashboard.cpp` — Sequence tracking, LATE/LOST status, the 64-packet history ring buffer, CSV parsing, JSON output, and the WiFi access point and web routes (`/`, `/data`).
 - `WebDashboardPage.h` — The web page stored in flash (generated from `web/index.html` by `tools/embed_page.py`).
 - `WebDashboardCodec.h` — `toDashboardReading()`, which turns the team's `DecodedPacket` into a dashboard reading in one call.
-- `WebDashboardDemo.h` / `WebDashboard.ino` — Example sketch with a demo mode: 3 fake rescuers walking near Snow Canyon, Utah, with lost packets, a duplicate, and Node 3 dropping out (LATE → LOST → recovers).
+- `WebDashboardDemo.h` / `WebDashboard.ino` — Example sketch with demo modes: 3 fake rescuers walking near Snow Canyon, Utah, with lost packets, a duplicate, and Node 3 dropping out (LATE → LOST → recovers). The presentation mode (`DASH_DEMO 2`) runs this on a fixed 2.5-minute schedule for class.
+- `DEMO.md` — The class presentation script: setup, schedule, talking points and likely questions.
 - `web/index.html` — The page source (HTML, CSS and JavaScript in one file).
 - `tools/preview_server.py` — Runs the page on a laptop with the same fake data, no board needed.
 - `test/` — Host tests compiled with g++ against stub Arduino/WiFi/WebServer headers.
@@ -65,8 +66,10 @@ All files are in `modules/WebDashboard/`. See its `README.md` for details.
 | `buildJson` valid JSON, `since` filter, 64-packet ring buffer | Pass: 8 JSON files valid in `python -m json.tool` |
 | Tiny buffers (0 to 3000 bytes) | Pass: no byte written past the buffer; paging delivers all 30 packets |
 | Web routes `/`, `/data`, unknown path | Pass: 200 page, 200 JSON, 404 |
-| **Total host tests** | **207 checks passed, 0 failed** |
-| ESP32 compile, `esp32:esp32:esp32` (core 3.3.12) | Pass: 977 215 bytes flash (74%), 68 072 bytes RAM (20%) |
-| ESP32 compile, `heltec_wifi_lora_32_V3` | Pass: 939 624 bytes flash (28%), 66 736 bytes RAM (20%) |
+| Mode label, boot ID (base restart detection), `since` past the newest packet, buffer too small for one packet | Pass |
+| **Total host tests** | **212 checks passed, 0 failed** |
+| ESP32 compile, `esp32:esp32:esp32` (core 3.3.12), presentation build | Pass: 978 395 bytes flash (74%), 68 128 bytes RAM (20%) |
+| ESP32 compile, `heltec_wifi_lora_32_V3` (first build) | Pass: 939 624 bytes flash (28%), 66 736 bytes RAM (20%) |
 | Browser preview: all 6 sections, LOST alert, refresh keeps history, phone layout without sideways scrolling | Pass |
+| Presentation schedule in the browser: GAP at 0:35, duplicate by 1:00, Node 3 LOST with alert at 1:46, back with 9 missed at 2:07 | Pass |
 | On real hardware | Not done yet |

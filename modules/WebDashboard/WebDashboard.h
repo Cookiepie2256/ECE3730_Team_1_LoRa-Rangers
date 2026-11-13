@@ -98,7 +98,8 @@ class WebDashboard {
     // Returns false if the access point could not start.
     bool begin(const char *ssid = DASH_AP_SSID, const char *pass = DASH_AP_PASS);
 
-    // Serves web requests. Call every loop(); it never blocks.
+    // Serves web requests. Call every loop(). Returns at once when idle;
+    // sending the page or a full history takes a few ms.
     void handleClient();
 
     // Main input: one decoded reading, stamped with the base station's
@@ -113,6 +114,11 @@ class WebDashboard {
 
     NodeStatus getStatus(uint16_t nodeId, uint32_t nowMs) const;
     void setTimeouts(uint32_t lateMs, uint32_t lostMs);
+
+    // Optional label shown in the page header, e.g. "Presentation demo".
+    // Letters, digits, spaces and simple punctuation only (no quotes).
+    // nullptr (the default) shows nothing.
+    void setModeLabel(const char *label) { modeLabel_ = label; }
 
     // nullptr if nodeId is out of range
     const NodeState *getNode(uint16_t nodeId) const;
@@ -140,6 +146,8 @@ class WebDashboard {
     uint32_t nextUid_;
     uint32_t lateMs_;
     uint32_t lostMs_;
+    const char *modeLabel_;
+    uint32_t bootId_; // Random per power-up, so the page spots a restart
     bool started_;
     WebServer server_;
 
