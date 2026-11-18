@@ -2,7 +2,8 @@
 # Requires `just` and `arduino-cli` on your PATH.
 #   just setup                  install the ESP32 core and all libraries
 #   just compile DHT11Sensor    compile one sketch in modules/
-#   just node BaseNode          compile a full node program in nodes/
+#   just node SensorNode        compile and flash a node program in nodes/ (port optional)
+#   just build-node BaseNode    compile a node program without flashing
 #   just fmt                    format all code (needs clang-format)
 #   just log /dev/ttyUSB0       record base station packets to packets.csv (needs uv)
 
@@ -13,6 +14,10 @@ esp32_url := "https://espressif.github.io/arduino-esp32/package_esp32_index.json
 
 # Board to build for (override with: just fqbn=esp32:esp32:<board> compile ...)
 fqbn := "esp32:esp32:esp32"
+
+# Serial port for flashing; pass another as the last argument if yours differs
+# (`arduino-cli board list` shows it)
+default_port := if os_family() == "windows" { "COM3" } else { "/dev/ttyUSB0" }
 
 # List available recipes
 default:
@@ -54,10 +59,20 @@ link-libs:
 compile sketch:
     arduino-cli compile --fqbn {{ fqbn }} modules/{{ sketch }}
 
-# Compile one full node program in nodes/ (e.g. just node BaseNode).
 # The board comes from that folder's sketch.yaml.
-node sketch:
+# Compile and flash a node program (e.g. just node SensorNode, just node BaseNode COM5)
+node sketch port=default_port:
+    arduino-cli compile --upload --port {{ port }} nodes/{{ sketch }}
+
+# Compile a node program without flashing it (e.g. just build-node BaseNode)
+build-node sketch:
     arduino-cli compile nodes/{{ sketch }}
+
+# Flash the base station program (same as: just node BaseNode)
+upload-base port=default_port: (node "BaseNode" port)
+
+# Flash the sensor node program (same as: just node SensorNode)
+upload-sensor port=default_port: (node "SensorNode" port)
 
 # Record packets from the base station into a CSV on this PC (needs uv), e.g.
 # just log /dev/ttyUSB0       just log COM3 run1.csv
@@ -70,11 +85,15 @@ test port="":
     uv run tools/test_serial_to_csv.py {{ if port == "" { "" } else { "--port " + port } }}
 
 # Generate compile_commands.json for clangd in every sketch (rerun after adding files/libraries)
-lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "NodeId") (compiledb "PacketCodec") (compiledb "SerialForwarder")
+lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "NodeId") (compiledb "PacketCodec") (compiledb "SerialForwarder") (compiledb-node "BaseNode") (compiledb-node "SensorNode")
 
 # Generate modules/<sketch>/build/compile_commands.json for one sketch
 compiledb sketch:
     -arduino-cli compile --fqbn {{ fqbn }} --only-compilation-database --build-path modules/{{ sketch }}/build modules/{{ sketch }}
+
+# Generate nodes/<sketch>/build/compile_commands.json (board from its sketch.yaml)
+compiledb-node sketch:
+    -arduino-cli compile --only-compilation-database --build-path nodes/{{ sketch }}/build nodes/{{ sketch }}
 
 [unix]
 fmt:
