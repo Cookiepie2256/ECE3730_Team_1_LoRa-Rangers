@@ -34,7 +34,7 @@ install-core:
 # Install the Arduino libraries used by the modules
 install-libs:
     arduino-cli lib update-index
-    arduino-cli lib install "DHT sensor library" "Adafruit Unified Sensor" "TinyGPSPlus" "RadioHead" "Adafruit SSD1306"
+    arduino-cli lib install "DHT sensor library" "Adafruit Unified Sensor" "TinyGPSPlus" "RadioLib" "Adafruit SSD1306"
 
 # Link each modules/ folder into the Arduino libraries folder, so sketches can
 # `#include <PacketCodec.h>` etc. Links point at this repo, so edits apply instantly.

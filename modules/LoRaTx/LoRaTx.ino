@@ -1,6 +1,6 @@
 #include "LoRaTx.h"
 
-LoRaTx loraRadio(18, 26, 915.0f);
+LoRaTx loraRadio(8, 14, 915.0f); // Heltec V3 on-board SX1262
 uint16_t seq = 1;
 
 void setup() {
@@ -13,7 +13,7 @@ void setup() {
     if (loraRadio.begin()) {
         Serial.println("[INIT] LoRa Radio Online.");
     } else {
-        Serial.println("[INIT] LoRa Radio offline. Running simulation.");
+        Serial.println("[INIT] LoRa Radio offline. Check the board and wiring.");
     }
 }
 

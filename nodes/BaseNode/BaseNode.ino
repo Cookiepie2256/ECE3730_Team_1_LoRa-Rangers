@@ -150,7 +150,7 @@ void updateDisplay() {
 // Steps 1-3 of the plan for one frame, if one is waiting
 void handleRadio() {
     // 1. Receive: returns at once if no frame is waiting
-    uint8_t frame[RH_RF95_MAX_MESSAGE_LEN];
+    uint8_t frame[LoRaTx::MAX_FRAME_LEN];
     uint8_t len = sizeof(frame);
     int16_t rssi = 0;
     if (!radioOk || !radio.receive(frame, len, rssi)) {
