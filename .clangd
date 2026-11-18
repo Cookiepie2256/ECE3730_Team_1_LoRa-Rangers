@@ -1,6 +1,8 @@
 # clangd settings for the ESP32 Arduino toolchain.
 # Compile commands come from `just lsp`, which writes
-# modules/<sketch>/build/compile_commands.json for each sketch.
+# modules/<sketch>/build/compile_commands.json and nodes/<sketch>/build/...
+# for each sketch. Start clangd with --query-driver=**/xtensa-esp*-elf-* so
+# it can find the ESP32 toolchain's headers (stdio.h etc.).
 CompileFlags:
   Add:
     # Keep the host's /usr/include out; the ESP32 toolchain has its own libc.

@@ -154,7 +154,11 @@ void sendPacket() {
     START_HOPS, batteryMv, frame);
 
   // 5. Send it (waits for the channel to be clear first)
-    if (!radioOk) radioOk = radio.begin();
+  if (!radioOk) {
+    display.println("Starting Radio");
+    radioOk = radio.begin(20, 500);
+  }
+
   const bool sent = radioOk && radio.transmitFrame(frame, len);
 
   printNodeName(Serial);
@@ -164,6 +168,7 @@ void sendPacket() {
                 (double)lastHumPct, (unsigned)batteryMv,
                 sensorOk ? "" : " (DHT11 read failed, last value)");
 
+  display.display();
   showReadings(sent, sensorOk, fix, lat, lng, batteryMv);
 }
 
@@ -203,6 +208,7 @@ void setup() {
 
   showBootStatus("Starting LoRa...");
   radioOk = radio.begin();
+
   // Keep running without a radio so the screen still shows the sensors
   showBootStatus(radioOk ? "LoRa: OK" : "LoRa: FAILED");
 

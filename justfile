@@ -85,11 +85,15 @@ test port="":
     uv run tools/test_serial_to_csv.py {{ if port == "" { "" } else { "--port " + port } }}
 
 # Generate compile_commands.json for clangd in every sketch (rerun after adding files/libraries)
-lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "NodeId") (compiledb "PacketCodec") (compiledb "SerialForwarder")
+lsp: (compiledb "DHT11Sensor") (compiledb "GPS") (compiledb "LoRaTx") (compiledb "NodeId") (compiledb "PacketCodec") (compiledb "SerialForwarder") (compiledb-node "BaseNode") (compiledb-node "SensorNode")
 
 # Generate modules/<sketch>/build/compile_commands.json for one sketch
 compiledb sketch:
     -arduino-cli compile --fqbn {{ fqbn }} --only-compilation-database --build-path modules/{{ sketch }}/build modules/{{ sketch }}
+
+# Generate nodes/<sketch>/build/compile_commands.json (board from its sketch.yaml)
+compiledb-node sketch:
+    -arduino-cli compile --only-compilation-database --build-path nodes/{{ sketch }}/build nodes/{{ sketch }}
 
 [unix]
 fmt:
