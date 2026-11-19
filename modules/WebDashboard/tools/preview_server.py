@@ -303,34 +303,78 @@ CSV_FIELDS = ["node_id", "seq", "elapsed_ms", "latitude", "longitude", "temp_c",
 REAL_LATE_MS, REAL_LOST_MS = 60_000, 150_000
 
 
+def _whole(text, lo, hi):
+    """A whole number in lo..hi, or None if the field is blank or not usable."""
+    if "_" in text:  # int() would read "2_0" as 20
+        return None
+    try:
+        v = int(text)
+    except ValueError:
+        return None
+    return v if lo <= v <= hi else None
+
+
+def _real(text, lo, hi):
+    """A number in lo..hi, NaN for "nan" (the sensor failed), or None if the
+    field is blank or not usable."""
+    if "_" in text:
+        return None
+    try:
+        v = float(text)
+    except ValueError:
+        return None
+    if math.isnan(v):
+        return v
+    return v if math.isfinite(v) and lo <= v <= hi else None
+
+
 def parse_csv(line, require_prefix=False):
     """Parse one SerialForwarder line, with the same rules as
-    WebDashboard::updateFromCsv. Returns a reading dict, or None."""
+    WebDashboard::updateFromCsv. Returns a reading dict, or None.
+
+    The line needs all 10 fields and a valid node ID, sequence number and
+    elapsed time. Any other value that is blank or impossible is left out
+    (NaN or None, shown blank on the page) and named in r["missing"], so one
+    missing value never costs the whole packet."""
     s = line.strip()
     if s.startswith(PREFIX):
         s = s[len(PREFIX):].strip()
     elif require_prefix:
         return None
     parts = [p.strip() for p in s.split(",")]
-    if len(parts) != len(CSV_FIELDS) or any(not p or "_" in p for p in parts):
+    if len(parts) != len(CSV_FIELDS):
         return None
-    try:
-        node, seq, elapsed = int(parts[0]), int(parts[1]), int(parts[2])
-        lat, lng, temp, hum = (float(p) for p in parts[3:7])
-        hops, batt, rssi = int(parts[7]), int(parts[8]), int(parts[9])
-    except ValueError:
+    node = _whole(parts[0], 0, 65535)
+    seq = _whole(parts[1], 0, 65535)
+    elapsed = _whole(parts[2], -2**31, 2**31 - 1)
+    if node is None or seq is None or elapsed is None:
         return None
 
-    def real(v, lo, hi, allow_nan=False):
-        return (allow_nan and math.isnan(v)) or (math.isfinite(v) and lo <= v <= hi)
-
-    if not (0 <= node <= 65535 and 0 <= seq <= 65535 and -2**31 <= elapsed < 2**31
-            and real(lat, -90, 90) and real(lng, -180, 180)
-            and real(temp, -100, 150, True) and real(hum, 0, 100, True)
-            and 0 <= hops <= 255 and 0 <= batt <= 65535 and -200 <= rssi <= 50):
-        return None
+    missing = []
+    lat, lng = _real(parts[3], -90, 90), _real(parts[4], -180, 180)
+    if lat is None or lng is None or math.isnan(lat) or math.isnan(lng):
+        lat = lng = math.nan  # half a position is no position
+        missing.append("GPS")
+    temp, hum = _real(parts[5], -100, 150), _real(parts[6], 0, 100)
+    if temp is None:
+        temp = math.nan
+        missing.append("temperature")
+    if hum is None:
+        hum = math.nan
+        missing.append("humidity")
+    # Top values are reserved: DASH_NO_HOPS / DASH_NO_BATTERY in WebDashboard.h
+    hops, batt, rssi = (_whole(parts[7], 0, 254), _whole(parts[8], 0, 65534),
+                        _whole(parts[9], -200, 50))
+    missing += [name for name, v in (("hops", hops), ("battery", batt), ("signal", rssi))
+                if v is None]
     return {"node": node, "seq": seq, "elapsedMs": elapsed, "lat": lat, "lng": lng,
-            "temp": temp, "humidity": hum, "hops": hops, "batteryMv": batt, "rssi": rssi}
+            "temp": temp, "humidity": hum, "hops": hops, "batteryMv": batt, "rssi": rssi,
+            "missing": missing}
+
+
+def missing_note(r):
+    """Text for the terminal when a kept packet had blank values, else ""."""
+    return f" (no {', '.join(r['missing'])})" if r.get("missing") else ""
 
 
 class LiveFeed:
@@ -360,7 +404,7 @@ class LiveFeed:
                 print(line)  # other output from the board (debug prints)
             return
         result = self.dash.update(r, self.now_ms())
-        print(f"[{result}] node {r['node']} seq {r['seq']}")
+        print(f"[{result}] node {r['node']} seq {r['seq']}{missing_note(r)}")
         if self.log and result != "BAD_NODE":
             values = line.strip()
             if values.startswith(PREFIX):
@@ -427,6 +471,8 @@ class CsvFeed:
             self.skipped += 1
             print(f"[skipped: node ID 0, or all {MAX_NODES} slots taken by other nodes] {line}")
             return None
+        if r["missing"]:
+            print(f"[csv] node {r['node']} seq {r['seq']}: kept{missing_note(r)}")
         self.rows += 1
         return result
 

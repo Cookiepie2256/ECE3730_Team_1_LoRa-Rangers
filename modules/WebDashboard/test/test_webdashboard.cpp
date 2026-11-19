@@ -118,13 +118,8 @@ static void testMalformedCsv() {
         "x,2,3,37.2,-113.6,25,31,3,3950,-92",               // not a number
         "1,2x,3,37.2,-113.6,25,31,3,3950,-92",              // junk after number
         "1,70000,3,37.2,-113.6,25,31,3,3950,-92",           // seq > 65535
-        "1,2,3,91.0,-113.6,25,31,3,3950,-92",               // latitude
-        "1,2,3,37.2,-181.0,25,31,3,3950,-92",               // longitude
-        "1,2,3,nan,-113.6,25,31,3,3950,-92",                // lat must be real
-        "1,2,3,37.2,-113.6,25,101,3,3950,-92",              // humidity > 100
-        "1,2,3,37.2,-113.6,25,31,256,3950,-92",             // hops > 255
-        "1,2,3,37.2,-113.6,25,31,3,70000,-92",              // battery
-        "1,2,3,37.2,-113.6,25,31,3,3950,-300",              // rssi
+        ",2,3,37.2,-113.6,25,31,3,3950,-92",                // no node ID
+        "1,2,,37.2,-113.6,25,31,3,3950,-92",                // no elapsed time
         "1,2,99999999999,37.2,-113.6,25,31,3,3950,-92",     // elapsed > int32
         "1;2;3;37.2;-113.6;25;31;3;3950;-92",               // wrong separator
     };
@@ -146,6 +141,68 @@ static void testMalformedCsv() {
         CHECK(d.getNode(id) == nullptr); // nothing was stored
     }
     CHECK(d.lastUid() == 0);
+}
+
+// A packet with a missing or impossible sensor value is kept; only that value
+// is blank. Node ID, sequence number and elapsed time are still required.
+static void testMissingValues() {
+    WebDashboard d;
+    UpdateResult res = UpdateResult::OLD;
+
+    // No GPS: blank fields
+    CHECK(d.updateFromCsv("5,1,1000,,,25,30,3,3700,-90", 1000, &res));
+    CHECK(res == UpdateResult::NEW);
+    const NodeState *s = d.getNode(5);
+    CHECK(s != nullptr && s->hasData);
+    CHECK(std::isnan(s->last.lat) && std::isnan(s->last.lng));
+    CHECK(std::fabs(s->last.tempC - 25.0f) < 1e-4);
+    CHECK(s->last.batteryMv == 3700 && s->last.rssi == -90 && s->last.hopLimit == 3);
+
+    // Half a position is no position: "nan", out of range, or not a number
+    const char *noGps[] = {
+        "5,2,2000,nan,-113.6,25,30,3,3700,-90",
+        "5,3,3000,91.0,-113.6,25,30,3,3700,-90",
+        "5,4,4000,37.2,-181.0,25,30,3,3700,-90",
+        "5,5,5000,37.2,abc,25,30,3,3700,-90",
+    };
+    for (const char *line : noGps) {
+        CHECK(d.updateFromCsv(line, 2000, &res));
+        CHECK(res == UpdateResult::NEW);
+        CHECK(std::isnan(s->last.lat) && std::isnan(s->last.lng));
+    }
+
+    // No temperature, humidity out of range: the position is still kept
+    CHECK(d.updateFromCsv("5,6,6000,37.2,-113.6,,101,3,3700,-90", 3000, &res));
+    CHECK(std::isnan(s->last.tempC) && std::isnan(s->last.humidity));
+    CHECK(std::fabs(s->last.lat - 37.2) < 1e-9 && std::fabs(s->last.lng + 113.6) < 1e-9);
+
+    // No hops, battery or signal
+    CHECK(d.updateFromCsv("5,7,7000,37.2,-113.6,25,30,,,", 4000, &res));
+    CHECK(s->last.hopLimit == DASH_NO_HOPS && s->last.batteryMv == DASH_NO_BATTERY &&
+          s->last.rssi == DASH_NO_RSSI);
+    CHECK(d.updateFromCsv("5,8,8000,37.2,-113.6,25,30,256,70000,-300", 5000, &res));
+    CHECK(s->last.hopLimit == DASH_NO_HOPS && s->last.batteryMv == DASH_NO_BATTERY &&
+          s->last.rssi == DASH_NO_RSSI);
+    CHECK(s->received == 8 && s->missed == 0); // every packet counted
+
+    // Missing values are null in the JSON, never a made-up number
+    std::string j = json(d, 5000, 0);
+    saveJson("missing_values", j.c_str());
+    CHECK(count(j, "\"batteryMv\":null,\"rssi\":null,\"hopLimit\":null") == 3); // node + 2 packets
+    CHECK(count(j, "\"lat\":null,\"lng\":null") == 5);
+    CHECK(count(j, "\"temp\":null,\"humidity\":null") == 1);
+    CHECK(count(j, "65535") == 0 && count(j, "-32768") == 0);
+
+    // The log line leaves them blank and keeps its column count
+    char buf[200];
+    size_t n = d.logLine(5, buf, sizeof(buf));
+    CHECK(n > 0);
+    CHECK(std::strncmp(buf, "DASH,5000,5,8,NEW,8000,37.200000,-113.600000,25.0,30.0,,,,8,0,0",
+                       n) == 0);
+    CHECK(count(buf, ",") == count(WebDashboard::LOG_HEADER, ","));
+    CHECK(d.updateFromCsv("5,9,9000,,,,,,,", 6000, &res));
+    n = d.logLine(5, buf, sizeof(buf));
+    CHECK(std::strncmp(buf, "DASH,6000,5,9,NEW,9000,,,,,,,,9,0,0", n) == 0);
 }
 
 static void testBadNodeIds() {
@@ -495,6 +552,7 @@ int main(int argc, char **argv) {
     } tests[] = {
         {"valid CSV", testValidCsv},
         {"malformed CSV", testMalformedCsv},
+        {"missing values keep the packet", testMissingValues},
         {"node ID 0, slots full", testBadNodeIds},
         {"MAC node IDs get slots", testSlotAssignment},
         {"gap", testGap},

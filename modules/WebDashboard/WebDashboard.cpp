@@ -59,6 +59,15 @@ struct JsonOut {
             add("null");
         }
     }
+
+    // A value the packet did not have (DASH_NO_...) becomes null too
+    void whole(long v, bool present) {
+        if (present) {
+            add("%ld", v);
+        } else {
+            add("null");
+        }
+    }
 };
 
 void writeReadingFields(JsonOut &o, const DashboardReading &r) {
@@ -70,8 +79,12 @@ void writeReadingFields(JsonOut &o, const DashboardReading &r) {
     o.number(r.tempC, 1);
     o.add(",\"humidity\":");
     o.number(r.humidity, 1);
-    o.add(",\"batteryMv\":%u,\"rssi\":%d,\"hopLimit\":%u",
-          (unsigned)r.batteryMv, (int)r.rssi, (unsigned)r.hopLimit);
+    o.add(",\"batteryMv\":");
+    o.whole(r.batteryMv, r.batteryMv != DASH_NO_BATTERY);
+    o.add(",\"rssi\":");
+    o.whole(r.rssi, r.rssi != DASH_NO_RSSI);
+    o.add(",\"hopLimit\":");
+    o.whole(r.hopLimit, r.hopLimit != DASH_NO_HOPS);
 }
 
 char *skipSpaces(char *s) {
@@ -298,18 +311,11 @@ bool WebDashboard::updateFromCsv(const char *line, uint32_t nowMs,
         return false;
     }
 
-    long long node, seq, elapsed, hops, battery, rssi;
-    double lat, lng, temp, hum;
+    // Without these three the packet cannot be placed, so the line is rejected
+    long long node, seq, elapsed;
     if (!parseInt(fields[0], 0, 65535, node) ||
         !parseInt(fields[1], 0, 65535, seq) ||
-        !parseInt(fields[2], INT32_MIN, INT32_MAX, elapsed) ||
-        !parseReal(fields[3], -90.0, 90.0, false, lat) ||
-        !parseReal(fields[4], -180.0, 180.0, false, lng) ||
-        !parseReal(fields[5], -100.0, 150.0, true, temp) ||
-        !parseReal(fields[6], 0.0, 100.0, true, hum) ||
-        !parseInt(fields[7], 0, 255, hops) ||
-        !parseInt(fields[8], 0, 65535, battery) ||
-        !parseInt(fields[9], -200, 50, rssi)) {
+        !parseInt(fields[2], INT32_MIN, INT32_MAX, elapsed)) {
         return false;
     }
 
@@ -317,13 +323,25 @@ bool WebDashboard::updateFromCsv(const char *line, uint32_t nowMs,
     r.nodeId = (uint16_t)node;
     r.seqNum = (uint16_t)seq;
     r.elapsedMs = (int32_t)elapsed;
-    r.lat = lat;
-    r.lng = lng;
-    r.tempC = (float)temp;
-    r.humidity = (float)hum;
-    r.hopLimit = (uint8_t)hops;
-    r.batteryMv = (uint16_t)battery;
-    r.rssi = (int16_t)rssi;
+
+    // Every other value is optional: if it is blank or impossible, only that
+    // value is left out and the packet is still kept.
+    double lat, lng, real;
+    const bool hasPos = parseReal(fields[3], -90.0, 90.0, false, lat) &&
+                        parseReal(fields[4], -180.0, 180.0, false, lng);
+    r.lat = hasPos ? lat : NAN; // Half a position is no position
+    r.lng = hasPos ? lng : NAN;
+    r.tempC = parseReal(fields[5], -100.0, 150.0, true, real) ? (float)real : NAN;
+    r.humidity = parseReal(fields[6], 0.0, 100.0, true, real) ? (float)real : NAN;
+
+    long long whole;
+    r.hopLimit = parseInt(fields[7], 0, DASH_NO_HOPS - 1, whole)
+                     ? (uint8_t)whole
+                     : DASH_NO_HOPS;
+    r.batteryMv = parseInt(fields[8], 0, DASH_NO_BATTERY - 1, whole)
+                      ? (uint16_t)whole
+                      : DASH_NO_BATTERY;
+    r.rssi = parseInt(fields[9], -200, 50, whole) ? (int16_t)whole : DASH_NO_RSSI;
 
     UpdateResult result = update(r, nowMs);
     if (out != nullptr) {
@@ -471,14 +489,34 @@ size_t WebDashboard::logLine(uint16_t nodeId, char *buf, size_t len) const {
         return 0;
     }
     const DashboardReading &r = st->last;
-    int n = snprintf(buf, len,
-                     "DASH,%lu,%u,%u,%s,%ld,%.6f,%.6f,%.1f,%.1f,%u,%u,%d,%lu,"
-                     "%lu,%lu",
+
+    // A value the packet did not have is an empty column
+    char lat[16] = "", lng[16] = "", temp[12] = "", hum[12] = "";
+    char hops[8] = "", batt[8] = "", rssi[8] = "";
+    if (isfinite(r.lat) && isfinite(r.lng)) {
+        snprintf(lat, sizeof(lat), "%.6f", r.lat);
+        snprintf(lng, sizeof(lng), "%.6f", r.lng);
+    }
+    if (isfinite(r.tempC)) {
+        snprintf(temp, sizeof(temp), "%.1f", (double)r.tempC);
+    }
+    if (isfinite(r.humidity)) {
+        snprintf(hum, sizeof(hum), "%.1f", (double)r.humidity);
+    }
+    if (r.hopLimit != DASH_NO_HOPS) {
+        snprintf(hops, sizeof(hops), "%u", (unsigned)r.hopLimit);
+    }
+    if (r.batteryMv != DASH_NO_BATTERY) {
+        snprintf(batt, sizeof(batt), "%u", (unsigned)r.batteryMv);
+    }
+    if (r.rssi != DASH_NO_RSSI) {
+        snprintf(rssi, sizeof(rssi), "%d", (int)r.rssi);
+    }
+
+    int n = snprintf(buf, len, "DASH,%lu,%u,%u,%s,%ld,%s,%s,%s,%s,%s,%s,%s,%lu,%lu,%lu",
                      (unsigned long)st->receivedAtMs, (unsigned)r.nodeId,
                      (unsigned)r.seqNum, resultName(st->lastResult),
-                     (long)r.elapsedMs, r.lat, r.lng, (double)r.tempC,
-                     (double)r.humidity, (unsigned)r.hopLimit,
-                     (unsigned)r.batteryMv, (int)r.rssi,
+                     (long)r.elapsedMs, lat, lng, temp, hum, hops, batt, rssi,
                      (unsigned long)st->received, (unsigned long)st->missed,
                      (unsigned long)st->duplicates);
     if (n < 0 || (size_t)n >= len) {

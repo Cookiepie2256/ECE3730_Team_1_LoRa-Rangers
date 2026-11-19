@@ -63,6 +63,14 @@ struct DashboardReading {
     int16_t rssi; // dBm, measured by the base station radio
 };
 
+// "The packet did not have this value": shown blank on the page, null in the
+// JSON. A missing position, temperature or humidity is NAN instead.
+// updateFromCsv() stores these when a field is blank or impossible, so one
+// missing value does not cost the whole packet.
+const uint8_t DASH_NO_HOPS = 255;
+const uint16_t DASH_NO_BATTERY = 65535;
+const int16_t DASH_NO_RSSI = -32768;
+
 enum class UpdateResult : uint8_t { NEW, GAP, DUPLICATE, OLD, BAD_NODE };
 enum class NodeStatus : uint8_t { NO_DATA, OK, LATE, LOST };
 

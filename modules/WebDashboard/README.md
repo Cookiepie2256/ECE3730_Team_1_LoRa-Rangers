@@ -65,6 +65,12 @@ python modules/WebDashboard/tools/preview_server.py       # terminal 2: opens ht
 - Each packet is shown at its `pc_time`, the time the PC logged it.
 - The server only reads the CSV. Rows that are malformed, have node ID 0,
   or come from a 4th node are skipped and printed in the terminal.
+- A row with a missing value is kept. Only node ID, sequence number and
+  elapsed time are required. Any other value that is blank or impossible
+  (no GPS, no temperature, no battery...) shows as `--` or **No GPS fix** on
+  the page, and the terminal says what was missing, e.g.
+  `[csv] node 47873 seq 2: kept (no GPS)`. The base station's
+  `updateFromCsv()` follows the same rule.
 - The header badge shows the file in use, e.g. **CSV: packets.csv**.
 
 Expected columns, exactly what `tools/serial_to_csv.py` writes:
@@ -239,6 +245,8 @@ sh test/run_tests.sh      # macOS / Linux
 The tests need `g++` and Python 3. They cover:
 
 - valid and malformed CSV, node ID 0, MAC-based IDs and slot assignment
+- missing values (GPS, temperature, humidity, hops, battery, signal): the
+  packet is kept and the value is `null` in the JSON
 - gap, duplicate and old packets
 - sequence wrap 65535 → 0, node reboot
 - OK → LATE → LOST timing, including `millis()` wrap

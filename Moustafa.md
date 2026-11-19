@@ -56,7 +56,8 @@ The module is in `modules/WebDashboard/`:
 | Test | Result |
 |------|--------|
 | Valid CSV, with and without the `[CSVDATA]` prefix, negative temperature, `nan` sensor values | Pass |
-| 20 malformed CSV lines (wrong field count, empty fields, junk, out-of-range lat/lng/humidity/seq/hops/battery/RSSI, too long, null) | Pass: all rejected, nothing stored |
+| 15 malformed CSV lines (wrong field count, missing or junk node ID / sequence / elapsed time, wrong separator, too long, null) | Pass: all rejected, nothing stored |
+| Missing or impossible GPS, temperature, humidity, hops, battery or RSSI | Pass: packet kept, only that value is blank (`null` in the JSON) |
 | Node IDs 0 and 4 | Pass: rejected as `BAD_NODE` |
 | Gap (seq 2 → 5) | Pass: `GAP`, 2 missed |
 | Duplicate / old packet | Pass: ignored and counted; "last seen" not refreshed |
@@ -99,7 +100,7 @@ Use it in this order: create one `WebDashboard` object, call `begin()` in `setup
 | `begin(ssid, pass)` | WiFi name and password (default `LoRaRangers-Base` / `rangers123`) | `bool`: true if the access point started | Starts WiFi at `192.168.4.1` and registers `/` and `/data`. Call once in `setup()`. |
 | `handleClient()` | None | None | Answers browser requests. Call every `loop()`. |
 | `update(reading, nowMs)` | `DashboardReading`, `millis()` | `UpdateResult`: `NEW`, `GAP`, `DUPLICATE`, `OLD`, `BAD_NODE` | Main input. Stores the reading and classifies it by sequence number. |
-| `updateFromCsv(line, nowMs, &result)` | One CSV line (`[CSVDATA] ` prefix optional), `millis()` | `bool`: false if malformed or the node ID is not 1–3 | Same as `update()` but for Braxton's `SerialForwarder` text line. |
+| `updateFromCsv(line, nowMs, &result)` | One CSV line (`[CSVDATA] ` prefix optional), `millis()` | `bool`: false if the line is malformed (wrong field count, or no valid node ID, sequence number or elapsed time) or the node ID is rejected. A blank or impossible sensor value does not reject the line; only that value is left out. | Same as `update()` but for Braxton's `SerialForwarder` text line. |
 | `toDashboardReading(pkt, rssi)` (`WebDashboardCodec.h`) | `DecodedPacket`, RSSI in dBm | `DashboardReading` | Converts the decoder's struct in one call. |
 | `getStatus(nodeId, nowMs)` | Node ID 1–3, `millis()` | `NodeStatus`: `NO_DATA`, `OK`, `LATE`, `LOST` | Lets the base station react to a lost rescuer. |
 | `setTimeouts(lateMs, lostMs)` | Milliseconds | None | Changes the 60 s / 150 s limits for a different send interval. |

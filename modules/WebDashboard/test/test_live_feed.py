@@ -34,17 +34,26 @@ BAD = [
     "x,2,3,37.2,-113.6,25,31,3,3950,-92",
     "1,2x,3,37.2,-113.6,25,31,3,3950,-92",
     "1,70000,3,37.2,-113.6,25,31,3,3950,-92",
-    "1,2,3,91.0,-113.6,25,31,3,3950,-92",
-    "1,2,3,37.2,-181.0,25,31,3,3950,-92",
-    "1,2,3,nan,-113.6,25,31,3,3950,-92",
-    "1,2,3,37.2,-113.6,25,101,3,3950,-92",
-    "1,2,3,37.2,-113.6,25,31,256,3950,-92",
-    "1,2,3,37.2,-113.6,25,31,3,70000,-92",
-    "1,2,3,37.2,-113.6,25,31,3,3950,-300",
+    ",2,3,37.2,-113.6,25,31,3,3950,-92",
+    "1,2,,37.2,-113.6,25,31,3,3950,-92",
     "1,2,99999999999,37.2,-113.6,25,31,3,3950,-92",
     "1;2;3;37.2;-113.6;25;31;3;3950;-92",
-    "1,2,3,37.2,-113.6,2_5,31,3,3950,-92",   # Python-only: underscores
-    "1,2,3,37.2,-113.6,inf,31,3,3950,-92",
+    "1,2_0,3,37.2,-113.6,25,31,3,3950,-92",  # Python-only: underscores
+]
+
+# Same lines as testMissingValues in test_webdashboard.cpp: the packet is kept
+# and only the listed values are blank
+MISSING = [
+    ("5,1,1000,,,25,30,3,3700,-90", ["GPS"]),
+    ("5,2,2000,nan,-113.6,25,30,3,3700,-90", ["GPS"]),
+    ("5,3,3000,91.0,-113.6,25,30,3,3700,-90", ["GPS"]),
+    ("5,4,4000,37.2,-181.0,25,30,3,3700,-90", ["GPS"]),
+    ("5,5,5000,37.2,abc,25,30,3,3700,-90", ["GPS"]),
+    ("5,6,6000,37.2,-113.6,,101,3,3700,-90", ["temperature", "humidity"]),
+    ("5,7,7000,37.2,-113.6,25,30,,,", ["hops", "battery", "signal"]),
+    ("5,8,8000,37.2,-113.6,25,30,256,70000,-300", ["hops", "battery", "signal"]),
+    ("5,9,9000,37.2,-113.6,2_5,inf,3,3700,-90", ["temperature", "humidity"]),
+    ("5,10,10000,,,,,,,", ["GPS", "temperature", "humidity", "hops", "battery", "signal"]),
 ]
 
 
@@ -61,6 +70,39 @@ def test_parse():
     check(r is not None and r["temp"] != r["temp"], "nan sensor values allowed")
     for line in BAD:
         check(ps.parse_csv(line) is None, f"rejects {line!r}")
+
+
+def test_missing_values():
+    """One missing value must not cost the whole packet."""
+    for line, missing in MISSING:
+        r = ps.parse_csv(line)
+        check(r is not None and r["missing"] == missing, f"keeps {line!r}, blank: {missing}")
+    check(ps.parse_csv(GOOD)["missing"] == [], "a complete line has nothing missing")
+    check(ps.parse_csv("3,1,0,0,0,nan,nan,0,0,-120")["missing"] == [],
+          "nan from a failed sensor and 0,0 without a fix are not reported")
+    r = ps.parse_csv("5,2,2000,nan,-113.6,25,30,3,3700,-90")
+    check(r["lat"] != r["lat"] and r["lng"] != r["lng"], "half a position is no position")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "packets.csv"
+        with path.open("w", newline="", encoding="utf-8") as f:
+            f.write("pc_time," + ",".join(ps.CSV_FIELDS) + "\r\n")
+            for i, (line, _) in enumerate(MISSING):
+                f.write(f"2026-11-13T10:00:{i:02d},{line}\r\n")
+        feed = ps.CsvFeed(path)
+        check(feed.poll() == len(MISSING) and feed.skipped == 0, "no row is dropped")
+        d = json.loads(json.dumps(feed.data(0), allow_nan=False))
+        node = d["nodes"][0]
+        check(node["received"] == len(MISSING) and node["missed"] == 0, "every packet counted")
+        pk = d["packets"]
+        check(pk[0]["lat"] is None and pk[0]["lng"] is None and pk[0]["temp"] == 25
+              and pk[0]["batteryMv"] == 3700, "no GPS: the other values are kept")
+        check(pk[5]["temp"] is None and pk[5]["humidity"] is None and pk[5]["lat"] == 37.2,
+              "no temperature: the position is kept")
+        check(pk[6]["hopLimit"] is None and pk[6]["batteryMv"] is None and pk[6]["rssi"] is None,
+              "missing hops, battery and signal are null")
+        check(all(node[k] is None for k in ("lat", "lng", "temp", "humidity", "hopLimit",
+                                            "batteryMv", "rssi")), "the card gets nulls too")
 
 
 def test_feed_and_json():
@@ -213,7 +255,7 @@ def test_demo_json_valid():
 
 
 if __name__ == "__main__":
-    for t in (test_parse, test_feed_and_json, test_mac_ids, test_csv_feed, test_sources,
+    for t in (test_parse, test_missing_values, test_feed_and_json, test_mac_ids, test_csv_feed, test_sources,
               test_demo_json_valid):
         before = failures
         t()
