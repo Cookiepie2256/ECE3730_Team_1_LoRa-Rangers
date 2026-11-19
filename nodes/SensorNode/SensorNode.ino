@@ -40,8 +40,8 @@ const float LORA_FREQ_MHZ = 915.0f;  // Must match the base station
 // The dashboard marks a node LATE after 60 s and LOST after 150 s, so 30 s
 // means LATE after 2 missed packets. A random extra delay keeps nodes that
 // powered on together from transmitting at the same moment every time.
-const uint32_t SEND_INTERVAL_MS = 30000;
-const uint32_t SEND_JITTER_MS = 3000;
+const uint32_t SEND_INTERVAL_MS = 3000;
+const uint32_t SEND_JITTER_MS = 1000;
 const uint8_t START_HOPS = 3;  // How many times relays may pass a packet on
 const bool ENABLE_RELAY = true;
 
