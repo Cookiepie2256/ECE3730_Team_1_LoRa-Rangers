@@ -15,7 +15,7 @@ from pathlib import Path
 MODULE = Path(__file__).resolve().parent.parent
 SRC = MODULE / "web" / "index.html"
 OUT = MODULE / "WebDashboardPage.h"
-LIMIT_BYTES = 40 * 1024
+LIMIT_BYTES = 48 * 1024
 DELIM = "DASHPAGE"
 
 

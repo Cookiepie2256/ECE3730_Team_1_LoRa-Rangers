@@ -121,6 +121,9 @@ background:linear-gradient(90deg,rgba(239,68,68,.22),rgba(239,68,68,.08));border
 #map text{fill:var(--muted);font-size:12px}
 #map .sb{stroke:var(--muted);stroke-width:2}
 #map .na{fill:var(--muted)}
+#map .rng{fill:none;stroke-width:1;stroke-opacity:.45;stroke-dasharray:2 5}
+#map .berr{fill:var(--text);fill-opacity:.08;stroke:var(--text);stroke-opacity:.4;stroke-dasharray:4 4}
+#map .base{fill:var(--text);stroke:var(--bg);stroke-width:2}
 #map .empty,.chart .empty{fill:var(--dim);font-size:14px;text-anchor:middle}
 .tip{position:absolute;pointer-events:none;padding:8px 10px;border-radius:9px;background:rgba(8,12,17,.95);border:1px solid var(--line2);font-size:12.5px;line-height:1.4;white-space:nowrap;opacity:0;transform:translate(-50%,calc(-100% - 12px));transition:opacity .1s}
 .tip.on{opacity:1}
@@ -251,6 +254,11 @@ var TRAIL = 200;         // map dots per node
 var LOG_ROWS = 200;
 var GAP_BREAK_MS = 150000; // chart line breaks after this long without data
 var MIN_SPAN_M = 120;    // smallest map extent, meters
+var RSSI_1M = -30;       // dBm heard 1 m from a node; tune in the field
+var PATH_N = 2.7;        // path loss exponent: ~2 open sky, 3-4 trees/buildings
+var START_HOPS = 3;      // SensorNode START_HOPS: fewer = relayed, RSSI is the relay's
+var BASE_PTS = 3;        // latest packets used
+var BASE_SPREAD_M = 15;  // packets closer together than this can't fix a position
 var METRICS = [
 {k: 'temp', t: 'Temperature', u: '°C', d: 1, span: 2},
 {k: 'humidity', t: 'Humidity', u: '%', d: 0, span: 6},
@@ -331,7 +339,7 @@ var now = Date.now(), added = 0;
 (d.packets || []).forEach(function (p) {
 if (p.uid <= lastId) return;
 hist.push({uid: p.uid, t: now - (d.nowMs - p.receivedAtMs), node: p.node, nodeId: p.nodeId, seq: p.seq, result: p.result,
-lat: p.lat, lng: p.lng, temp: p.temp, humidity: p.humidity, batteryMv: p.batteryMv, rssi: p.rssi});
+lat: p.lat, lng: p.lng, temp: p.temp, humidity: p.humidity, batteryMv: p.batteryMv, rssi: p.rssi, hops: p.hopLimit});
 added++;
 });
 if (hist.length > CAP) hist.splice(0, hist.length - CAP);
@@ -465,6 +473,54 @@ try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
 document.body.removeChild(ta);
 done(ok);
 }
+function rssiDist(rssi) { return Math.pow(10, (RSSI_1M - rssi) / (10 * PATH_N)); }
+function baseEstimate() {
+var a = [], i, j;
+for (i = hist.length - 1; i >= 0 && a.length < BASE_PTS; i--) {
+var p = hist[i];
+if (hasFix(p) && fin(p.rssi) && (p.result === 'NEW' || p.result === 'GAP') && !(fin(p.hops) && p.hops < START_HOPS)) a.push(p);
+}
+if (a.length < BASE_PTS) return null;
+var latC = 0, lngC = 0;
+a.forEach(function (p) { latC += p.lat / a.length; lngC += p.lng / a.length; });
+var kx = 111320 * Math.cos(latC * Math.PI / 180), ky = 110540;
+var q = a.map(function (p) { return {x: (p.lng - lngC) * kx, y: (p.lat - latC) * ky, d: rssiDist(p.rssi), p: p}; });
+var spread = 0, dMean = 0;
+for (i = 0; i < q.length; i++) {
+dMean += q[i].d / q.length;
+for (j = i + 1; j < q.length; j++) spread = Math.max(spread, Math.hypot(q[i].x - q[j].x, q[i].y - q[j].y));
+}
+var est = {anchors: q, weak: spread < BASE_SPREAD_M, lat: latC, lng: lngC, d: dMean, err: dMean};
+if (est.weak) return est;
+var x = 0, y = 0, w = 0;
+q.forEach(function (c) { var k = 1 / (c.d * c.d); x += c.x * k; y += c.y * k; w += k; });
+x /= w; y /= w;
+var rss = 0;
+for (var it = 0; it < 50; it++) {
+var a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+rss = 0;
+q.forEach(function (c) {
+var dx = x - c.x, dy = y - c.y, r = Math.hypot(dx, dy) || 1e-6, e = r - c.d, jx = dx / r, jy = dy / r;
+a11 += jx * jx; a12 += jx * jy; a22 += jy * jy; b1 += jx * e; b2 += jy * e; rss += e * e;
+});
+var damp = 1e-3 * (a11 + a22) + 1e-9;
+a11 += damp; a22 += damp;
+var det = a11 * a22 - a12 * a12, sx = (a22 * b1 - a12 * b2) / det, sy = (a11 * b2 - a12 * b1) / det;
+if (!isFinite(sx) || !isFinite(sy)) break;
+x -= sx; y -= sy;
+if (Math.hypot(sx, sy) < 0.05) break;
+}
+var g11 = 0, g12 = 0, g22 = 0;
+q.forEach(function (c) {
+var dx = x - c.x, dy = y - c.y, r = Math.hypot(dx, dy) || 1e-6;
+g11 += dx * dx / (r * r); g12 += dx * dy / (r * r); g22 += dy * dy / (r * r);
+});
+var gdop = Math.sqrt((g11 + g22) / Math.max(g11 * g22 - g12 * g12, 1e-9));
+est.lat = latC + y / ky; est.lng = lngC + x / kx;
+est.err = Math.max(Math.sqrt(rss / q.length), Math.min(gdop, 50) * 0.35 * dMean);
+if (est.err > 1.5 * dMean) { est.weak = true; est.lat = latC; est.lng = lngC; }
+return est;
+}
 function buildToggles() {
 NODES.forEach(function (n) { var o = $('#filter').options[n]; if (o) o.textContent = idName(rid(n)); });
 $('#toggles').innerHTML = NODES.map(function (n) {
@@ -482,6 +538,8 @@ for (var i = hist.length - 1; i >= 0 && a.length < TRAIL; i--) if (hist[i].node 
 a.reverse(); series[n] = a; all = all.concat(a);
 });
 mapPts = [];
+var est = baseEstimate();
+if (est) all = all.concat([{lat: est.lat, lng: est.lng}]);
 if (!all.length) {
 svg.innerHTML = '<text class="empty" x="' + W / 2 + '" y="' + H / 2 + '">Waiting for GPS fixes…</text>';
 return;
@@ -498,6 +556,20 @@ var out = '<g class="grid">', step = nice(Math.max(W, H) / sc / 9), m;
 for (m = Math.ceil(-W / 2 / sc / step) * step; m <= W / 2 / sc; m += step) out += '<line x1="' + (W / 2 + m * sc).toFixed(1) + '" y1="0" x2="' + (W / 2 + m * sc).toFixed(1) + '" y2="' + H + '"/>';
 for (m = Math.ceil(-H / 2 / sc / step) * step; m <= H / 2 / sc; m += step) out += '<line x1="0" y1="' + (H / 2 + m * sc).toFixed(1) + '" x2="' + W + '" y2="' + (H / 2 + m * sc).toFixed(1) + '"/>';
 out += '</g>';
+var top = '';
+if (est) {
+var bx = X(est.lng).toFixed(1), by0 = Y(est.lat).toFixed(1);
+est.anchors.forEach(function (c) {
+out += '<circle class="rng" cx="' + X(c.p.lng).toFixed(1) + '" cy="' + Y(c.p.lat).toFixed(1) + '" r="' + (c.d * sc).toFixed(1) + '" stroke="' + COLOR[c.p.node] + '"/>';
+});
+if (!est.weak) {
+top += '<circle class="berr" cx="' + bx + '" cy="' + by0 + '" r="' + Math.max(est.err * sc, 10).toFixed(1) + '"/>';
+mapPts.push({base: est});
+top += '<rect class="pt base" data-i="' + (mapPts.length - 1) + '" x="' + (bx - 7) + '" y="' + (by0 - 7) + '" width="14" height="14" transform="rotate(45 ' + bx + ' ' + by0 + ')"/>';
+}
+top += '<text x="18" y="22">' + (est.weak ? 'Base ≈ ' + Math.round(est.d) + ' m from the latest packets (spread the nodes out to locate it)'
+: 'Base ≈ ' + est.lat.toFixed(5) + ', ' + est.lng.toFixed(5) + ' ±' + Math.round(est.err) + ' m (signal strength)') + '</text>';
+}
 NODES.forEach(function (n) {
 var a = series[n];
 if (!a || !a.length) return;
@@ -511,6 +583,7 @@ if (last) out += '<circle class="ring" cx="' + x + '" cy="' + y + '" r="7" strok
 out += '<circle class="pt" data-i="' + (mapPts.length - 1) + '" cx="' + x + '" cy="' + y + '" r="' + (last ? 7 : 3.5) + '" fill="' + c + '" fill-opacity="' + op.toFixed(2) + '"' + (last ? ' stroke="#fff" stroke-width="2"' : '') + '/>';
 });
 });
+out += top;
 var len = nice(W * 0.22 / sc, true), px = len * sc, by = H - 22;
 out += '<g class="sb"><line x1="18" y1="' + by + '" x2="' + (18 + px).toFixed(1) + '" y2="' + by + '"/><line x1="18" y1="' + (by - 5) + '" x2="18" y2="' + (by + 5) + '"/><line x1="' + (18 + px).toFixed(1) + '" y1="' + (by - 5) + '" x2="' + (18 + px).toFixed(1) + '" y2="' + (by + 5) + '"/></g>';
 out += '<text x="18" y="' + (by - 9) + '">' + (len >= 1000 ? len / 1000 + ' km' : len + ' m') + '</text>';
@@ -521,8 +594,14 @@ function showTip(e) {
 var tip = $('#tip'), i = e.target.getAttribute && e.target.getAttribute('data-i');
 if (i === null || i === undefined) { tip.className = 'tip'; return; }
 var p = mapPts[+i], wrap = tip.parentNode.getBoundingClientRect(), r = e.target.getBoundingClientRect();
+if (p.base) {
+tip.style.setProperty('--c', 'var(--text)');
+tip.innerHTML = '<b>Base station (estimate)</b><br>' + p.base.lat.toFixed(6) + ', ' + p.base.lng.toFixed(6) + ' ±' + Math.round(p.base.err) + ' m<br>' +
+p.base.anchors.map(function (c) { return esc(idName(pid(c.p))) + ' ' + c.p.rssi + ' dBm ≈ ' + Math.round(c.d) + ' m'; }).join('<br>');
+} else {
 tip.style.setProperty('--c', COLOR[p.node]);
 tip.innerHTML = '<b>' + esc(named(pid(p))) + '</b> · update #' + p.uid + '<br>' + fD(p.t) + '<br>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
+}
 tip.style.left = (r.left + r.width / 2 - wrap.left) + 'px';
 tip.style.top = (r.top - wrap.top) + 'px';
 tip.className = 'tip on';

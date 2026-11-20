@@ -168,7 +168,9 @@ class DashboardDemo {
         r.humidity = h < 0 ? 0 : (h > 100 ? 100 : h);
         r.hopLimit = (n.id == 3 && random(10) < 4) ? 2 : 3;
         r.batteryMv = (uint16_t)(n.batteryMv + random(-4, 5));
-        int rssi = (int)(-68 - sqrt(dx * dx + dy * dy) / 25 + rnd(-4, 4));
+        // Log-distance path loss, same model the page uses to place the base
+        const double d = sqrt(dx * dx + dy * dy);
+        int rssi = (int)(-30 - 27 * log10(d < 1 ? 1 : d) + rnd(-4, 4));
         r.rssi = (int16_t)(rssi < -125 ? -125 : rssi);
         return r;
     }

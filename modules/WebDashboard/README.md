@@ -13,6 +13,7 @@ The dashboard shows:
 2. An alert banner when a node is LOST: *"Node 3 LOST, last seen 14:02:11 at 37.2045, -113.6402"*
 3. One card per node: status, temperature, humidity, battery, RSSI, last seen, sequence, received / missed / duplicates, loss %, position with a copy button, hop limit
 4. A position map with trails, a scale bar in meters, a north arrow and per-node toggles
+   - **Base station estimate.** The base has no GPS, so the map guesses where it is from the signal strength (RSSI) of the 3 latest packets heard directly (relayed copies and duplicates are skipped). Each RSSI becomes a distance with `distance = 10^((RSSI_1M - rssi) / (10 * PATH_N))`, drawn as a dashed ring around that packet, and the base is the white diamond where the rings best meet, with a dashed ± circle. If the packets came from about one spot or a bad layout (in a line, all on one side), only the rings and the distance are shown. Tune `RSSI_1M` (-30 dBm) and `PATH_N` (2.7) at the top of the script in `web/index.html` by standing a node at a known distance. Expect errors of ~100 m at a few hundred meters: RSSI ranging is rough.
 5. Temperature, humidity and RSSI charts (10 min / 30 min / All)
 6. A packet log (newest first, filter by node, GAP rows highlighted)
 

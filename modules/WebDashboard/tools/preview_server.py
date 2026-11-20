@@ -247,7 +247,8 @@ class FakeNode:
             "humidity": max(0.0, min(100.0, self.HUM[self.node] + 3 * math.cos(minutes / 9 + self.node) + random.uniform(-1, 1))),
             "hops": 2 if (self.node == 3 and random.random() < 0.4) else 3,
             "batteryMv": self.batt + random.randint(-4, 4),
-            "rssi": max(-125, int(-68 - dist / 25 + random.uniform(-4, 4))),
+            # Log-distance path loss, same model the page uses to place the base
+            "rssi": max(-125, int(-30 - 27 * math.log10(max(dist, 1)) + random.uniform(-4, 4))),
         }
 
 
